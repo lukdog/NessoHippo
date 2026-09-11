@@ -110,9 +110,9 @@ static unsigned long s_statsEnteredMs    = 0;
 // Traces the resolved face state and mood to serial. Verification aid for
 // the section 14 acceptance run; off in normal use.
 #define FACE_DEBUG 0
-// Logs BLE connection transitions and heartbeat age. Diagnostic for the
-// "does not come back after the Mac locks" case.
-#define BLE_DEBUG 1
+// Logs BLE connection transitions and heartbeat age to serial. The stats
+// panel carries the same counters without a cable, so this stays off.
+#define BLE_DEBUG 0
 static bool          s_wasTouched         = false;
 static unsigned long s_lastPetMs          = 0;
 static bool          s_touchReady         = false;
