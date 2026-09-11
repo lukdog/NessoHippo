@@ -28,16 +28,22 @@ void protocolHandleLine(const String& line, Snapshot& s, ProtocolFx& fx) {
   DeserializationError err = deserializeJson(doc, line);
   if (err) return;
 
-  // Heartbeat snapshot: detected by the presence of "total" or "running".
-  // The desktop sends these every few seconds without any "cmd" field.
-  if (doc["total"].is<int>() || doc["running"].is<int>() ||
-      doc["waiting"].is<int>()) {
-    s.total       = doc["total"]   | 0;
-    s.running     = doc["running"] | 0;
-    s.waiting     = doc["waiting"] | 0;
-    s.msg         = String((const char*)(doc["msg"] | ""));
-    s.tokens      = doc["tokens"]       | 0L;
-    s.tokensToday = doc["tokens_today"] | 0L;
+  // Heartbeat snapshot: detected by any of the snapshot fields. The
+  // desktop sends these every few seconds without any "cmd" field, and
+  // always in full — but a bare {"tokens_today":N}, which is what the
+  // acceptance test uses to drive the mood, has to count as one too.
+  if (doc["total"].is<int>()  || doc["running"].is<int>() ||
+      doc["waiting"].is<int>()|| doc["tokens"].is<long>() ||
+      doc["tokens_today"].is<long>()) {
+    // Only fields actually present are updated. The desktop sends the
+    // whole snapshot, so this changes nothing there, but it stops a
+    // partial message from silently zeroing everything it omitted.
+    if (doc["total"].is<int>())          s.total       = doc["total"];
+    if (doc["running"].is<int>())        s.running     = doc["running"];
+    if (doc["waiting"].is<int>())        s.waiting     = doc["waiting"];
+    if (doc["tokens"].is<long>())        s.tokens      = doc["tokens"];
+    if (doc["tokens_today"].is<long>())  s.tokensToday = doc["tokens_today"];
+    if (doc["msg"].is<const char*>())    s.msg = String((const char*)doc["msg"]);
 
     if (doc["prompt"].is<JsonObject>()) {
       JsonObject p = doc["prompt"].as<JsonObject>();

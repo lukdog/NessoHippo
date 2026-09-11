@@ -62,6 +62,7 @@ static bool          s_backlightOn       = true;
 // accumulate elapsed seconds into snap.napSeconds at 1 Hz granularity.
 static unsigned long s_napAccumMs        = 0;  // sub-second carry
 static bool          s_wasFaceDown       = false;
+static unsigned long s_lastLoopMs        = 0;  // measured loop period
 
 // On-device stats overlay: KEY2 long-press toggles a fullscreen panel
 // with the persisted counters, level, uptime, heap and battery. Painted
@@ -80,6 +81,9 @@ static unsigned long s_statsEnteredMs    = 0;
 // TOUCH_DEBUG to 1 to log raw and mapped coordinates while checking that
 // a landscape persona registers pets in the right place.
 #define TOUCH_DEBUG 1
+// Traces the resolved face state and mood to serial. Verification aid for
+// the section 14 acceptance run; off in normal use.
+#define FACE_DEBUG 0
 static bool          s_wasTouched         = false;
 static unsigned long s_lastPetMs          = 0;
 static bool          s_touchReady         = false;
@@ -110,7 +114,11 @@ static unsigned long s_lastFaceFrameMs  = 0;
 // desktop is asleep or out of range. Coming back after a long silence
 // earns a brief "oh, you're back" CURIOUS.
 #define HEARTBEAT_STALE_MS  30000UL
-#define WELCOME_BACK_MS    120000UL
+// Spec section 11 asks for the "oh, you're back" chirp after >2 minutes of
+// silence, but section 14 step 7 expects it after the 30 s that put the
+// face to sleep. Waking from ASLEEP is the coherent trigger, so this
+// matches HEARTBEAT_STALE_MS; set it to 120000 for the stricter reading.
+#define WELCOME_BACK_MS     HEARTBEAT_STALE_MS
 static unsigned long s_lastHeartbeatMs   = 0;
 static unsigned long s_faceCuriousUntilMs = 0;
 
@@ -381,9 +389,11 @@ void loop() {
   // Nap-time accounting: accumulate elapsed time while face-down. We
   // commit a whole second at a time so persistMarkDirty() doesn't fire
   // on every tick of the loop.
+  const unsigned long loopDtMs = s_lastLoopMs ? (now - s_lastLoopMs) : 0;
+  s_lastLoopMs = now;
   bool faceDownNow = motionFaceDown();
   if (faceDownNow && s_wasFaceDown) {
-    s_napAccumMs += 20; // loop period
+    s_napAccumMs += loopDtMs;
     if (s_napAccumMs >= 1000) {
       snap.napSeconds += s_napAccumMs / 1000;
       s_napAccumMs %= 1000;
@@ -547,9 +557,38 @@ void loop() {
       if (now - s_lastFaceFrameMs >= FACE_FRAME_MS) {
         s_lastFaceFrameMs = now;
         const FaceState fs = faceStateFor(st, now);
-        if (fs == FS_MOOD_IDLE) faceSetMood(moodValue(snap));
+        const float mood = moodValue(snap);
+        if (fs == FS_MOOD_IDLE) faceSetMood(mood);
         else                    faceSetState(fs);
-        uiRender(st, snap, s_usbPlugged, s_batPct, &faceTick((uint32_t)now));
+        const FaceParams& fp = faceTick((uint32_t)now);
+#if FACE_DEBUG
+        static FaceState dbgLastFs = FS_COUNT;
+        static int       dbgLastHue = -999;
+        const int hue = (int)fp.bgHue;
+        if (fs != dbgLastFs || abs(hue - dbgLastHue) >= 3) {
+          Serial.printf("face=%d mood=%d%% today=%ld base=%.0f "
+                        "eyeOpen=%.2f joy=%+.2f hue=%d\n",
+                        (int)fs, (int)(mood * 100.0f), snap.tokensToday,
+                        snap.tokenBaseline, fp.eyeOpen, fp.joy, hue);
+          dbgLastFs = fs;
+          dbgLastHue = hue;
+        }
+#endif
+        uiRender(st, snap, s_usbPlugged, s_batPct, &fp);
+#if FACE_DEBUG
+        // Real cadence, since the 33 ms target competes with a 64 KB
+        // polled-SPI push and the 20 ms loop delay.
+        static unsigned long fpsWindowMs = 0, fpsFrames = 0, worstMs = 0;
+        const unsigned long frameMs = millis() - now;
+        if (frameMs > worstMs) worstMs = frameMs;
+        fpsFrames++;
+        if (now - fpsWindowMs >= 5000) {
+          Serial.printf("fps=%lu worst_frame=%lums heap=%uKB\n",
+                        fpsFrames / 5, worstMs,
+                        (unsigned)(ESP.getFreeHeap() / 1024));
+          fpsWindowMs = now; fpsFrames = 0; worstMs = 0;
+        }
+#endif
       }
     } else {
       uiRender(st, snap, s_usbPlugged, s_batPct, nullptr);
@@ -558,5 +597,10 @@ void loop() {
 
   updateMelody();
 
-  delay(20);
+  // A full-screen persona's own render paces the loop — the 64 KB push is
+  // polled, not DMA, so it blocks for ~30 ms on its own. Idling another
+  // 20 ms on top only costs frame rate, and the spec wants 30 fps.
+  const bool selfPaced = s_backlightOn && !s_statsOverlay &&
+                         g_activeBuddy && g_activeBuddy->ownsFullScreen;
+  delay(selfPaced ? 5 : 20);
 }
