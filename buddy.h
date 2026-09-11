@@ -49,6 +49,7 @@ struct Buddy {
 };
 
 extern const Buddy CAT_BUDDY;
+extern const Buddy FACE_BUDDY;
 
 // Active buddy. Never assign to this directly — go through uiSetBuddy(),
 // which also owns the sprite and the display rotation.

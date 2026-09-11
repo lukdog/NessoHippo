@@ -27,6 +27,7 @@
 #include "ble_bridge.h"
 #include "protocol.h"
 #include "buddy.h"
+#include "face.h"
 #include "motion.h"
 #include "ui.h"
 #include "persist.h"
@@ -73,6 +74,11 @@ static unsigned long s_statsEnteredMs    = 0;
 // edge-detect "finger landed" and trigger one HEART one-shot per
 // touch. PET_REFRACTORY_MS keeps rapid repeated touches from spamming
 // the counter (still feels responsive at ~3 pets/sec).
+// The controller reports raw portrait coordinates regardless of the
+// display rotation, so every tap goes through uiMapTouch(). Set
+// TOUCH_DEBUG to 1 to log raw and mapped coordinates while checking that
+// a landscape persona registers pets in the right place.
+#define TOUCH_DEBUG 1
 static bool          s_wasTouched         = false;
 static unsigned long s_lastPetMs          = 0;
 static bool          s_touchReady         = false;
@@ -287,9 +293,16 @@ void loop() {
   //     is up (a tap there means "dismiss", handled below) and while a
   //     permission prompt is pending (don't bury the user's intent to
   //     hit a physical button by playing the heart melody).
-  bool touchedNow = s_touchReady && touch.isTouched();
+  int16_t rawX = 0, rawY = 0;
+  bool touchedNow = s_touchReady && touch.read(rawX, rawY);
   if (touchedNow && !s_wasTouched && !s_statsOverlay && !snap.hasPrompt) {
-    if (now - s_lastPetMs >= PET_REFRACTORY_MS) {
+    int16_t tx = 0, ty = 0;
+    bool onScreen = uiMapTouch(rawX, rawY, tx, ty);
+#if TOUCH_DEBUG
+    Serial.printf("tap raw=(%d,%d) -> screen=(%d,%d) %s\n",
+                  rawX, rawY, tx, ty, onScreen ? "ok" : "OFF-SCREEN");
+#endif
+    if (onScreen && now - s_lastPetMs >= PET_REFRACTORY_MS) {
       triggerOneShot(PS_HEART);
       snap.petCount++;
       persistMarkDirty();
@@ -462,7 +475,13 @@ void loop() {
         uiClear();
       }
     } else {
-      uiRender(st, snap, s_usbPlugged, s_batPct, nullptr);
+      // A full-screen persona drives itself from the parameter vector;
+      // frame-based ones ignore it.
+      const FaceParams* fp = nullptr;
+      if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
+        fp = &faceTick((uint32_t)now);
+      }
+      uiRender(st, snap, s_usbPlugged, s_batPct, fp);
     }
   }
 
