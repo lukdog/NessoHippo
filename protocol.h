@@ -20,6 +20,11 @@ struct Snapshot {
   String   buddyName   = "Clawd";
   String   ownerName;
   bool     muted       = false;       // KEY1 long-press toggles; persisted
+  // Mood baseline — the owner's own recent daily token average, and the
+  // day tracking that advances it. Persisted; 0 baseline means unseeded.
+  float    tokenBaseline   = 0.0f;
+  uint32_t lastDayIndex    = 0;
+  long     tokensYesterday = 0;
   // Local stats — loaded from NVS at boot, written back coalesced.
   uint32_t approveCount = 0;
   uint32_t denyCount    = 0;

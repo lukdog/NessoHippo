@@ -37,6 +37,10 @@ void persistBegin(Snapshot& s) {
   s.petCount     = s_prefs.getUInt("pets",  0);
   s.muted        = s_prefs.getBool("muted", false);
 
+  s.tokenBaseline   = s_prefs.getFloat("base",  0.0f);
+  s.lastDayIndex    = s_prefs.getUInt ("day",   0);
+  s.tokensYesterday = (long)s_prefs.getUInt("tokyd", 0);
+
   String n = s_prefs.getString("name",  "");
   if (n.length() > 0) s.buddyName = n;
   String o = s_prefs.getString("owner", "");
@@ -60,6 +64,10 @@ void persistFlush(const Snapshot& s) {
   s_prefs.putUInt("nap",   s.napSeconds);
   s_prefs.putUInt("pets",  s.petCount);
   s_prefs.putBool("muted", s.muted);
+  s_prefs.putFloat("base",  s.tokenBaseline);
+  s_prefs.putUInt ("day",   s.lastDayIndex);
+  s_prefs.putUInt ("tokyd", (uint32_t)(s.tokensYesterday < 0 ? 0
+                                                             : s.tokensYesterday));
   s_prefs.putString("name",  s.buddyName);
   s_prefs.putString("owner", s.ownerName);
   s_dirty       = false;

@@ -1,6 +1,7 @@
 #include "protocol.h"
 #include "ble_bridge.h"
 #include "persist.h"
+#include "mood.h"
 
 #include <ArduinoJson.h>
 
@@ -53,8 +54,15 @@ void protocolHandleLine(const String& line, Snapshot& s, ProtocolFx& fx) {
     return; // no ack for heartbeats (they're unsolicited)
   }
 
-  // time sync — silently accept (no clock UI in this build)
+  // time sync — no clock UI, but the mood baseline needs to know when the
+  // owner's local day rolls over.
   if (doc["time"].is<JsonArray>()) {
+    JsonArray t = doc["time"].as<JsonArray>();
+    if (t.size() >= 1) {
+      const uint32_t unixSec = t[0] | 0UL;
+      const int32_t  tzOff   = (t.size() >= 2) ? (int32_t)(t[1] | 0L) : 0;
+      moodOnTime(unixSec, tzOff, s);
+    }
     bleSendLine(ack("time", true));
     return;
   }

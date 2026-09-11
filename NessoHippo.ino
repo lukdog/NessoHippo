@@ -270,8 +270,15 @@ void loop() {
       triggerOneShot(PS_HEART);
     }
     if (fx.unpaired) {
-      // Drop the snapshot so we go back to SLEEP via the disconnect path.
-      snap = Snapshot{};
+      // Drop the session so we go back to SLEEP via the disconnect path,
+      // but keep what is persisted — stats, identity and the mood
+      // baseline. A whole-Snapshot reset would zero those and the next
+      // flush would write the zeros to flash.
+      snap.total = snap.running = snap.waiting = 0;
+      snap.msg = "";
+      snap.tokens = snap.tokensToday = 0;
+      snap.hasPrompt = false;
+      snap.promptId = snap.promptTool = snap.promptHint = "";
     }
     s_lastInteractionMs = now;
   }
