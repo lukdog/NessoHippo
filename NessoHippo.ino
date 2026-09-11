@@ -58,6 +58,23 @@ static unsigned long s_lastInteractionMs = 0;
 static bool          s_backlightOn       = true;
 #define AUTO_OFF_MS 30000UL
 
+// Waking back up. The screen used to be a one-way trip: the only things
+// that could switch it back on were a pending prompt or USB power, and
+// with the desk computer asleep neither can happen — so on battery it
+// stayed dark until a button press. A touch, a nudge or a resumed
+// heartbeat now bring it back too.
+//
+// When the computer is away the wake is deliberately half-hearted: crack
+// one eye open, then go back to sleep, rather than burning 30 s of
+// backlight for someone who only knocked the desk. PEEK_CLOSE_MS exists
+// so the eye is seen closing instead of the screen cutting out mid-blink.
+#define PEEK_OPEN_MS   1800UL
+#define PEEK_CLOSE_MS  1200UL
+#define PEEK_COOLDOWN_MS 6000UL
+static unsigned long s_peekUntilMs   = 0;   // one eye open until here
+static unsigned long s_peekOffAtMs   = 0;   // backlight off at here
+static unsigned long s_lastPeekEndMs = 0;
+
 // Nap-time accounting. While the device is face-down (SLEEP), we
 // accumulate elapsed seconds into snap.napSeconds at 1 Hz granularity.
 static unsigned long s_napAccumMs        = 0;  // sub-second carry
@@ -199,6 +216,30 @@ static void updateMelody() {
   }
 }
 
+// The desktop is asleep, locked, or out of range.
+static bool computerAway(unsigned long now) {
+  return !bleIsConnected() || (now - s_lastHeartbeatMs >= HEARTBEAT_STALE_MS);
+}
+
+// Bring the screen back. `allowPeek` asks for the half-awake version, but
+// only counts when the screen was actually off: waking a screen that is
+// already on must not cut its remaining time from 30 s down to three.
+static void wakeScreen(unsigned long now, bool allowPeek) {
+  const bool wasOff = !s_backlightOn;
+  if (wasOff) {
+    uiBacklight(true);
+    s_backlightOn = true;
+  }
+  s_lastInteractionMs = now;
+  if (allowPeek && wasOff) {
+    s_peekUntilMs = now + PEEK_OPEN_MS;
+    s_peekOffAtMs = now + PEEK_OPEN_MS + PEEK_CLOSE_MS;
+  } else {
+    s_peekUntilMs = 0;
+    s_peekOffAtMs = 0;
+  }
+}
+
 static void triggerOneShot(PersonaState s) {
   s_oneShotActive  = true;
   s_oneShotState   = s;
@@ -236,8 +277,11 @@ static PersonaState deriveBase() {
 // rather than a table row. ASLEEP is checked first and independently, so
 // it outranks the one-shots.
 static FaceState faceStateFor(PersonaState st, unsigned long now) {
-  if (!bleIsConnected() || motionFaceDown() || !s_backlightOn ||
-      now - s_lastHeartbeatMs >= HEARTBEAT_STALE_MS) {
+  if (computerAway(now) || motionFaceDown() || !s_backlightOn) {
+    // Nudged or petted with nobody at the desk: one eye, then back down.
+    if (s_peekUntilMs && now < s_peekUntilMs && !motionFaceDown()) {
+      return FS_PEEK;
+    }
     return FS_ASLEEP;
   }
   switch (st) {
@@ -315,6 +359,8 @@ void loop() {
         s_faceCuriousUntilMs = now + ONE_SHOT_MS;
       }
       s_lastHeartbeatMs = now;
+      // The computer is being used again: come properly awake.
+      wakeScreen(now, false);
     }
     if (fx.statusRequested) {
       bleSendLine(protocolBuildStatus(snap, s_usbPlugged, s_batPct));
@@ -355,7 +401,15 @@ void loop() {
     triggerOneShot(PS_DIZZY);
     snap.shakeCount++;
     persistMarkDirty();
-    s_lastInteractionMs = now;
+    wakeScreen(now, computerAway(now));
+  }
+  // A nudge only wakes the screen — no stat, no one-shot. The cooldown is
+  // on top of the detector's own refractory, so a fidgety desk cannot make
+  // the face peek every few seconds.
+  if (motionConsumeNudge()) {
+    const bool tooSoon = !s_backlightOn &&
+                         (now - s_lastPeekEndMs < PEEK_COOLDOWN_MS);
+    if (!tooSoon) wakeScreen(now, computerAway(now));
   }
 
   // 2b. Touchscreen "pet" detection. Rising edge of touch → one HEART
@@ -378,6 +432,7 @@ void loop() {
       triggerOneShot(PS_HEART);
       snap.petCount++;
       persistMarkDirty();
+      wakeScreen(now, computerAway(now));
       // A short, soft chirp so petting feels rewarding without competing
       // with the louder approve/deny audio. Different pitch from anything
       // else on the device so it's instantly identifiable.
@@ -450,8 +505,7 @@ void loop() {
     if (s_key1LongFired) {
       // Long press already consumed; swallow the release.
     } else if (!s_backlightOn) {
-      uiBacklight(true);
-      s_backlightOn = true;
+      wakeScreen(now, false);
     } else if (s_statsOverlay) {
       s_statsOverlay = false;
       uiClear();
@@ -525,13 +579,25 @@ void loop() {
   // we have a pending prompt or USB power. Wake on shake / button / new
   // message (handled by s_lastInteractionMs updates above).
   if (st == PS_ATTENTION) s_lastInteractionMs = now;
-  if (s_backlightOn && !s_usbPlugged &&
+
+  // A peek has its own short deadline: the eye is already shutting by the
+  // time this fires, so the screen goes dark on a closed eye.
+  if (s_peekOffAtMs && now >= s_peekOffAtMs) {
+    s_peekUntilMs   = 0;
+    s_peekOffAtMs   = 0;
+    s_lastPeekEndMs = now;
+    if (!s_usbPlugged && computerAway(now) && st != PS_ATTENTION) {
+      uiBacklight(false);
+      s_backlightOn = false;
+    }
+  }
+
+  if (s_backlightOn && !s_usbPlugged && !s_peekOffAtMs &&
       now - s_lastInteractionMs >= AUTO_OFF_MS) {
     uiBacklight(false);
     s_backlightOn = false;
   } else if (!s_backlightOn && (st == PS_ATTENTION || s_usbPlugged)) {
-    uiBacklight(true);
-    s_backlightOn = true;
+    wakeScreen(now, false);
   }
 
   // 7. Persistence: coalesced periodic flush, plus an opportunistic

@@ -25,6 +25,7 @@ enum FaceState {
   FS_CURIOUS,
   FS_DIZZY,
   FS_HEART,
+  FS_PEEK,      // half awake: one eye only, for a nudge with nobody at the desk
   FS_COUNT,
 };
 

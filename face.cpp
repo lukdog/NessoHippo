@@ -42,6 +42,11 @@ static const float SQUASH_HAPPY = 0.86f;
 
 static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
+// -1 = both eyes follow eyeOpen; 0 or 1 = only that eye opens, the other
+// stays shut. Set when entering FS_PEEK; the drawing code needs to know
+// which eye is closed, not what state the face is in.
+static int s_openEyeOnly = -1;
+
 // HSV -> RGB565. The only color math in the file; there is no gradient
 // code anywhere.
 static uint16_t hsv565(float h, float s, float v) {
@@ -160,12 +165,18 @@ static void faceDraw(LGFX_Sprite& spr, const FaceParams& p, float blink,
 
   const float joyT   = (p.joy + 1.0f) * 0.5f;
   const float squash = lerpf(SQUASH_SAD, SQUASH_HAPPY, joyT);
-  float h = EYE_BASE_H * p.eyeOpen * blink * squash;
-  if (h < 5.0f) h = 5.0f;
+  const float hOpen  = EYE_BASE_H * p.eyeOpen * blink * squash;
   const float w = (EYE_BASE_W / squash) * (1.0f + 0.12f * (1.0f - blink));
 
-  drawEye(spr, p, EYE_LEFT_X,  +1, w, h, bounceOff, blink, dark, white, bg);
-  drawEye(spr, p, EYE_RIGHT_X, -1, w, h, bounceOff, blink, dark, white, bg);
+  // A peek opens one eye and leaves the other shut. The clamp is per eye,
+  // so the closed one collapses to the same flat capsule as a shut eye.
+  float hL = (s_openEyeOnly == 1) ? 0.0f : hOpen;
+  float hR = (s_openEyeOnly == 0) ? 0.0f : hOpen;
+  if (hL < 5.0f) hL = 5.0f;
+  if (hR < 5.0f) hR = 5.0f;
+
+  drawEye(spr, p, EYE_LEFT_X,  +1, w, hL, bounceOff, blink, dark, white, bg);
+  drawEye(spr, p, EYE_RIGHT_X, -1, w, hR, bounceOff, blink, dark, white, bg);
 
   const float noseW = NOSE_BASE_W + lerpf(0.0f, NOSE_MAX_FLARE, joyT)
                       + noseQuiver;
@@ -206,6 +217,9 @@ static const FaceParams STATE_TABLE[FS_COUNT] = {
   /* FS_CURIOUS */ {  1.00f,   0.0f,  0.0f,  0.0f,  0.4f, 168.0f, 2.0f },
   /* FS_DIZZY   */ {  1.00f,   0.0f,  0.0f,  0.0f,  0.0f, 295.0f, 0.0f },
   /* FS_HEART   */ {  0.60f,  -0.3f,  0.0f,  0.0f,  1.0f, 330.0f, 3.0f },
+  // Keeps the ASLEEP hue: it is still the middle of the night, the face is
+  // just checking who that was.
+  /* FS_PEEK    */ {  0.95f,   0.1f,  0.0f,  0.0f,  0.0f, 228.0f, 1.0f },
 };
 
 // Animation state. `blink` and the breathing offset are deliberately not
@@ -241,6 +255,7 @@ static float hueApproach(float from, float to, float t) {
 
 void faceSetState(FaceState st) {
   if (st == s_state || st < 0 || st >= FS_COUNT) return;
+  s_openEyeOnly = (st == FS_PEEK) ? (int)random(2) : -1;
   s_state  = st;
   s_target = STATE_TABLE[st];
 }
@@ -255,6 +270,7 @@ void faceSetMood(float mood) {
   const FaceParams& sad = STATE_TABLE[FS_SAD];
   const FaceParams& happy = STATE_TABLE[FS_HAPPY];
   s_state = FS_HAPPY;
+  s_openEyeOnly = -1;
   s_target.eyeOpen = lerpf(sad.eyeOpen, happy.eyeOpen, mood);
   s_target.lidTilt = lerpf(sad.lidTilt, happy.lidTilt, mood);
   s_target.joy     = lerpf(sad.joy,     happy.joy,     mood);

@@ -12,5 +12,10 @@ void motionTick();
 // per loop iteration; consuming the event clears it.
 bool motionConsumeShake();
 
+// Edge-triggered: a gentle nudge — a fraction of the shake threshold, for
+// "someone is at the desk" rather than "someone is shaking me". Used to
+// bring the screen back, so it must not need a deliberate gesture.
+bool motionConsumeNudge();
+
 // Level-triggered: true while the device has been face-down for >=1 s.
 bool motionFaceDown();

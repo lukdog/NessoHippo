@@ -65,9 +65,31 @@ Priority order, highest first:
 | `CURIOUS` | a prompt is pending, or a heartbeat just resumed after a nap |
 | `BUSY` | `running > 0` — the nostrils quiver |
 | mood-driven | the resting default |
+| `PEEK` | touched or nudged while the computer is away — see below |
 
 NessoFace draws no approval overlay: a pending prompt just makes it curious,
 the chirp still plays, and KEY1/KEY2 approve and deny exactly as before.
+
+## Sleeping and waking
+
+The backlight still goes dark after 30 s of idle on battery, but it is no
+longer a one-way trip. NessoBuddy could only switch it back on for a pending
+prompt or for USB power, and with the desk computer asleep neither can happen
+— so the device looked dead until you pressed a button. Now:
+
+- **a resumed heartbeat** wakes it properly (the computer is being used again),
+- **a touch or a nudge** wakes it, and
+- if the computer is *away*, that wake is deliberately half-hearted: the face
+  cracks **one eye** open, looks around for a couple of seconds, then shuts it
+  and goes back to sleep. Someone knocked the desk; that does not deserve 30 s
+  of backlight.
+
+The nudge threshold (`NUDGE_THRESHOLD_G`, 0.18 g) sits well below the shake
+threshold so picking the device up registers but typing on the same desk does
+not, and `PEEK_COOLDOWN_MS` stops a busy desk from making it peek on a loop.
+
+Note that with USB connected the backlight never turns off at all, so the peek
+can only be observed on battery.
 
 ## Idle life
 

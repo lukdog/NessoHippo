@@ -29,6 +29,11 @@
 #define SHAKE_INSTANT_G         1.80f   // a single huge spike triggers immediately
 #define SHAKE_REFRACTORY_MS     1500UL
 
+// A nudge is a nudge, not a shake: high enough that typing on the same
+// desk does not register, low enough that picking the device up does.
+#define NUDGE_THRESHOLD_G       0.18f
+#define NUDGE_REFRACTORY_MS     1200UL
+
 #define FACEDOWN_AZ_THRESHOLD  -0.70f
 #define FACEDOWN_HOLD_MS        1000UL
 
@@ -37,6 +42,8 @@
 
 static float          s_gravityEMA   = 1.0f;
 static float          s_dynEMA       = 0.0f;
+static bool           s_nudgePending  = false;
+static unsigned long  s_lastNudgeMs   = 0;
 static int            s_prevSign     = 0;     // sign of last suprathreshold sample
 static unsigned long  s_crossings[8];
 static int            s_crossIdx     = 0;
@@ -81,6 +88,13 @@ void motionTick() {
 #ifdef DEBUG_MOTION
   float absDyn = dyn < 0 ? -dyn : dyn;
   if (absDyn > s_peakAbsDyn) s_peakAbsDyn = absDyn;
+
+  // Nudge: one sample over a low threshold is enough. Refractory-limited
+  // so carrying the device around does not fire it continuously.
+  if (absDyn > NUDGE_THRESHOLD_G && now - s_lastNudgeMs >= NUDGE_REFRACTORY_MS) {
+    s_nudgePending = true;
+    s_lastNudgeMs  = now;
+  }
   if (now - s_lastDbgMs >= 250) {
     Serial.printf("[motion] peak|dyn|=%.2fg  ax=%.2f ay=%.2f az=%.2f g=%.2f\n",
                   s_peakAbsDyn, ax, ay, az, s_gravityEMA);
@@ -139,6 +153,12 @@ bool motionConsumeShake() {
   if (!s_pendingShake) return false;
   s_pendingShake = false;
   return true;
+}
+
+bool motionConsumeNudge() {
+  bool n = s_nudgePending;
+  s_nudgePending = false;
+  return n;
 }
 
 bool motionFaceDown() {
