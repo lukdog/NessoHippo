@@ -206,8 +206,8 @@ void setup() {
   Serial.begin(115200);
 
   display.begin();
-  display.setRotation(0); // portrait 135x240
   display.fillScreen(0x0000);
+  // Rotation belongs to ui.cpp: it depends on which persona is active.
 
   motionBegin();
 
@@ -462,7 +462,7 @@ void loop() {
         uiClear();
       }
     } else {
-      uiRender(st, snap, s_usbPlugged, s_batPct);
+      uiRender(st, snap, s_usbPlugged, s_batPct, nullptr);
     }
   }
 

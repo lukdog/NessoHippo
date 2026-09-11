@@ -14,24 +14,42 @@ enum PersonaState {
   PS_HEART,
 };
 
-// A Buddy is just a pair of callbacks. Keeping them as function pointers
+// Parameter vector for full-screen parametric buddies. Defined in face.h;
+// only ever passed around by reference here.
+struct FaceParams;
+
+// Resolve the wall-clock millis() into a stable frame index for the
+// given state. ui.cpp uses this to detect "same frame as last time"
+// and skip the redraw + push entirely.
+typedef int (*BuddyFrameIndexFn)(PersonaState state, unsigned long frameMs);
+
+// Draw `state`/`frameIdx` centered on `(cx, cy)` into `target`. Target
+// is an LGFXBase so the same code paints either the live panel or an
+// off-screen sprite — the latter is how ui.cpp gets flicker-free
+// double buffering.
+typedef void (*BuddyDrawFrameFn)(lgfx::LGFXBase& target,
+                                 PersonaState state, int frameIdx,
+                                 int cx, int cy);
+
+// Full-screen variant: gets the whole sprite and owns it, clear included.
+// Frame-based buddies leave this null.
+typedef void (*BuddyDrawFullFn)(LGFX_Sprite& spr, const FaceParams& p,
+                                uint32_t nowMs);
+
+// A Buddy is just a set of callbacks. Keeping them as function pointers
 // (rather than virtual methods) lets us hold a const Buddy in flash.
+// A buddy is either frame-based (frameIndex + drawFrame, the ASCII pets)
+// or full-screen parametric (drawFull + ownsFullScreen); never both.
 struct Buddy {
-  const char* name;
-  // Resolve the wall-clock millis() into a stable frame index for the
-  // given state. ui.cpp uses this to detect "same frame as last time"
-  // and skip the redraw + push entirely.
-  int  (*frameIndex)(PersonaState state, unsigned long frameMs);
-  // Draw `state`/`frameIdx` centered on `(cx, cy)` into `target`. Target
-  // is an LGFXBase so the same code paints either the live panel or an
-  // off-screen sprite — the latter is how ui.cpp gets flicker-free
-  // double buffering.
-  void (*drawFrame)(lgfx::LGFXBase& target,
-                    PersonaState state, int frameIdx, int cx, int cy);
+  const char*       name;
+  BuddyFrameIndexFn frameIndex;      // null for full-screen buddies
+  BuddyDrawFrameFn  drawFrame;       // null for full-screen buddies
+  BuddyDrawFullFn   drawFull;        // null for frame-based buddies
+  bool              ownsFullScreen;  // skip bg fill + HUD, hand over the sprite
 };
 
 extern const Buddy CAT_BUDDY;
 
-// Active buddy — for now, always the cat. Kept as a pointer to make
-// pluggability cheap if a second buddy is added later.
+// Active buddy. Never assign to this directly — go through uiSetBuddy(),
+// which also owns the sprite and the display rotation.
 extern const Buddy* g_activeBuddy;
