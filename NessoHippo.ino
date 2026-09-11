@@ -98,6 +98,16 @@ static bool          s_key2LongFired     = false;
 // (flash wear: better to write once on disconnect than on every event).
 static bool          s_wasConnected      = false;
 
+// Full-screen personas repaint every pixel, so they get an explicit frame
+// clock instead of riding the loop period: the parameter interpolation is
+// tuned for 30 fps and a 64 KB sprite push costs ~13 ms over SPI.
+#define FACE_FRAME_MS          33UL
+static unsigned long s_lastFaceFrameMs  = 0;
+
+// Temporary tuning aid (this commit only): KEY2 short-press steps through
+// the state table so every mood can be checked on the real panel.
+static FaceState     s_faceTuneState     = FS_HAPPY;
+
 // Buzzer state machine (copied pattern from NessoHourglass).
 struct Note { uint16_t freq; uint16_t durMs; };
 static const Note CELEBRATE_MELODY[] = {
@@ -427,6 +437,10 @@ void loop() {
       snap.hasPrompt = false;
       triggerOneShot(PS_CELEBRATE);
       playBeep(440, 120);
+    } else if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
+      s_faceTuneState = (FaceState)((s_faceTuneState + 1) % FS_COUNT);
+      faceSetState(s_faceTuneState);
+      Serial.printf("face state -> %d\n", (int)s_faceTuneState);
     }
   }
   lastK1 = k1;
@@ -474,14 +488,15 @@ void loop() {
         s_statsOverlay = false;
         uiClear();
       }
-    } else {
-      // A full-screen persona drives itself from the parameter vector;
-      // frame-based ones ignore it.
-      const FaceParams* fp = nullptr;
-      if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
-        fp = &faceTick((uint32_t)now);
+    } else if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
+      // A full-screen persona drives itself from the parameter vector, on
+      // its own 30 fps clock.
+      if (now - s_lastFaceFrameMs >= FACE_FRAME_MS) {
+        s_lastFaceFrameMs = now;
+        uiRender(st, snap, s_usbPlugged, s_batPct, &faceTick((uint32_t)now));
       }
-      uiRender(st, snap, s_usbPlugged, s_batPct, fp);
+    } else {
+      uiRender(st, snap, s_usbPlugged, s_batPct, nullptr);
     }
   }
 

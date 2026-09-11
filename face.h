@@ -15,7 +15,24 @@ struct FaceParams {
   float bounce;    // 0..4 px of breathing amplitude
 };
 
+// The moods NessoFace can hold. Distinct from PersonaState: these are
+// what the face looks like, not what the session is doing.
+enum FaceState {
+  FS_ASLEEP,
+  FS_SAD,
+  FS_HAPPY,
+  FS_BUSY,
+  FS_CURIOUS,
+  FS_DIZZY,
+  FS_HEART,
+  FS_COUNT,
+};
+
 extern const Buddy FACE_BUDDY;
 
-// Parameters for this frame.
+// Set the parameter target. Cheap and idempotent — call it every loop.
+void faceSetState(FaceState st);
+
+// Advance one animation frame (blink, breath, gaze, interpolation) and
+// return the parameters for it. Expects to be called at ~30 fps.
 const FaceParams& faceTick(uint32_t nowMs);

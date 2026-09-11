@@ -175,21 +175,140 @@ static void faceDraw(LGFX_Sprite& spr, const FaceParams& p, float blink,
   }
 }
 
-// Static for now: the parameter interpolation, the state table and the
-// idle life (blink, breath, gaze) arrive in the next commit.
-static const FaceParams FACE_HAPPY = {
-  /*eyeOpen*/ 0.85f, /*lidTilt*/ -0.2f, /*pupilX*/ 0.0f, /*pupilY*/ 0.0f,
-  /*joy*/ 0.9f, /*bgHue*/ 88.0f, /*bounce*/ 3.0f,
+// ---- animation tuning (spec sections 6 and 9) ----
+static const float    LERP_RATE       = 0.05f;  // ~1 s settle at 30 fps
+static const float    GAZE_LERP       = 0.30f;  // deliberately snappy
+static const uint32_t BLINK_MIN_MS    = 2600;
+static const uint32_t BLINK_MAX_MS    = 6000;
+static const uint32_t BLINK_MS        = 150;
+static const uint32_t BLINK_DOUBLE_MS = 300;
+static const int      BLINK_DOUBLE_PCT= 12;
+static const uint32_t BREATH_MS       = 3000;
+static const uint32_t GAZE_MIN_MS     = 1900;
+static const uint32_t GAZE_MAX_MS     = 4300;
+static const uint32_t GAZE_BUSY_MIN_MS= 800;
+static const uint32_t GAZE_BUSY_MAX_MS= 3200;
+static const float    GAZE_RANGE_X    = 0.45f;
+static const float    GAZE_RANGE_Y    = 0.35f;
+static const uint32_t NOSE_QUIVER_MS  = 300;
+static const float    NOSE_QUIVER_AMP = 1.2f;
+
+static const float TWO_PI_F = 6.2831853f;
+
+//                                eyeOpen lidTilt pupilX pupilY   joy    hue  bounce
+static const FaceParams STATE_TABLE[FS_COUNT] = {
+  /* FS_ASLEEP  */ {  0.05f,   0.3f,  0.0f,  0.0f,  0.0f, 228.0f, 1.0f },
+  /* FS_SAD     */ {  0.70f,   0.8f,  0.0f,  0.0f, -0.8f, 210.0f, 0.0f },
+  /* FS_HAPPY   */ {  0.85f,  -0.2f,  0.0f,  0.0f,  0.9f,  88.0f, 3.0f },
+  /* FS_BUSY    */ {  0.60f,  -0.5f,  0.0f,  0.0f,  0.2f,  34.0f, 2.0f },
+  /* FS_CURIOUS */ {  1.00f,   0.0f,  0.0f,  0.0f,  0.4f, 168.0f, 2.0f },
+  /* FS_DIZZY   */ {  1.00f,   0.0f,  0.0f,  0.0f,  0.0f, 295.0f, 0.0f },
+  /* FS_HEART   */ {  0.60f,  -0.3f,  0.0f,  0.0f,  1.0f, 330.0f, 3.0f },
 };
 
+// Animation state. `blink` and the breathing offset are deliberately not
+// FaceParams fields: the state table has no opinion on them and they must
+// never be interpolated.
+static FaceState  s_state  = FS_HAPPY;
+static FaceParams s_target = STATE_TABLE[FS_HAPPY];
+static FaceParams s_cur    = STATE_TABLE[FS_HAPPY];
+static float      s_blink     = 1.0f;
+static float      s_bounceOff = 0.0f;
+static bool       s_seeded    = false;
+
+static uint32_t s_nextBlinkMs  = 0;
+static uint32_t s_blinkStartMs = 0;
+static uint32_t s_blinkDurMs   = 0;
+static bool     s_blinking     = false;
+static uint32_t s_nextGazeMs   = 0;
+static float    s_gazeTargetX  = 0.0f;
+static float    s_gazeTargetY  = 0.0f;
+
+static inline float randf(float range) {
+  return (float)random(-1000, 1001) / 1000.0f * range;
+}
+
+// Shortest way around the hue wheel, so 350 -> 10 crosses zero instead of
+// sweeping backwards through the whole spectrum.
+static float hueApproach(float from, float to, float t) {
+  const float d = fmodf(to - from + 540.0f, 360.0f) - 180.0f;
+  float h = fmodf(from + d * t, 360.0f);
+  return h < 0.0f ? h + 360.0f : h;
+}
+
+void faceSetState(FaceState st) {
+  if (st == s_state || st < 0 || st >= FS_COUNT) return;
+  s_state  = st;
+  s_target = STATE_TABLE[st];
+}
+
+// Squash-and-stretch, not a fade: the blink also widens the eye by 12%
+// (see the w formula), which is what makes it read as modern.
+static void updateBlink(uint32_t now) {
+  if (s_blinking) {
+    const uint32_t elapsed = now - s_blinkStartMs;
+    if (elapsed >= s_blinkDurMs) {
+      s_blinking = false;
+      s_blink    = 1.0f;
+      s_nextBlinkMs = now + (uint32_t)random(BLINK_MIN_MS, BLINK_MAX_MS + 1);
+      return;
+    }
+    float p = (float)elapsed / (float)s_blinkDurMs;
+    if (s_blinkDurMs == BLINK_DOUBLE_MS) p = fmodf(p * 2.0f, 1.0f);
+    s_blink = fabsf(1.0f - 2.0f * p);
+  } else if ((int32_t)(now - s_nextBlinkMs) >= 0) {
+    s_blinking     = true;
+    s_blinkStartMs = now;
+    s_blinkDurMs   = (random(100) < BLINK_DOUBLE_PCT) ? BLINK_DOUBLE_MS
+                                                      : BLINK_MS;
+  }
+}
+
+// A snappy saccade looks alive; a slow glide looks sleepy. Hence the fast
+// lerp, and hence gaze being excluded from the parameter interpolation.
+static void updateGaze(uint32_t now) {
+  if ((int32_t)(now - s_nextGazeMs) >= 0) {
+    s_gazeTargetX = randf(GAZE_RANGE_X);
+    s_gazeTargetY = randf(GAZE_RANGE_Y);
+    const bool busy = (s_state == FS_BUSY);
+    s_nextGazeMs = now + (uint32_t)random(busy ? GAZE_BUSY_MIN_MS : GAZE_MIN_MS,
+                                          (busy ? GAZE_BUSY_MAX_MS
+                                                : GAZE_MAX_MS) + 1);
+  }
+  s_cur.pupilX += (s_gazeTargetX - s_cur.pupilX) * GAZE_LERP;
+  s_cur.pupilY += (s_gazeTargetY - s_cur.pupilY) * GAZE_LERP;
+}
+
 const FaceParams& faceTick(uint32_t nowMs) {
-  (void)nowMs;
-  return FACE_HAPPY;
+  if (!s_seeded) {
+    randomSeed(esp_random());
+    s_seeded       = true;
+    s_nextBlinkMs  = nowMs + (uint32_t)random(BLINK_MIN_MS, BLINK_MAX_MS + 1);
+    s_nextGazeMs   = nowMs;
+  }
+
+  // Everything except gaze eases toward the target; nothing ever snaps.
+  s_cur.eyeOpen += (s_target.eyeOpen - s_cur.eyeOpen) * LERP_RATE;
+  s_cur.lidTilt += (s_target.lidTilt - s_cur.lidTilt) * LERP_RATE;
+  s_cur.joy     += (s_target.joy     - s_cur.joy)     * LERP_RATE;
+  s_cur.bounce  += (s_target.bounce  - s_cur.bounce)  * LERP_RATE;
+  s_cur.bgHue    = hueApproach(s_cur.bgHue, s_target.bgHue, LERP_RATE);
+
+  updateBlink(nowMs);
+  updateGaze(nowMs);
+  s_bounceOff = s_cur.bounce *
+                sinf((float)(nowMs % BREATH_MS) * TWO_PI_F / (float)BREATH_MS);
+  return s_cur;
 }
 
 static void faceDrawFull(LGFX_Sprite& spr, const FaceParams& p, uint32_t nowMs) {
-  (void)nowMs;
-  faceDraw(spr, p, 1.0f, 0.0f, 0.0f);
+  // Nostril quiver while Claude is working. Nothing else animates them.
+  const float quiver =
+      (s_state == FS_BUSY)
+          ? NOSE_QUIVER_AMP * sinf((float)(nowMs % NOSE_QUIVER_MS) *
+                                   TWO_PI_F / (float)NOSE_QUIVER_MS)
+          : 0.0f;
+  faceDraw(spr, p, s_blink, s_bounceOff, quiver);
 }
 
 const Buddy FACE_BUDDY = { "face", nullptr, nullptr, faceDrawFull, true };
