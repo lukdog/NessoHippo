@@ -25,8 +25,14 @@ static const float EYE_SHADOW_DY= 4.0f;
 static const float GAZE_X_PX    = 15.0f;  // px of travel per unit pupilX
 static const float GAZE_Y_PX    = 11.0f;
 static const float LID_TILT_RAD = 0.20f;  // radians per unit lidTilt
-static const float HILITE_SIZE  = 11.0f;
-static const float HILITE_RADIUS= 5.0f;
+// A specular streak, like a window reflected in something curved, rather
+// than a round dot. Position is a share of the eye, so it tracks the
+// squash instead of drifting when the eye changes shape.
+static const float HILITE_W     = 15.0f;
+static const float HILITE_H     = 6.0f;
+static const float HILITE_RADIUS= 3.0f;
+static const float HILITE_FX    =  0.19f;
+static const float HILITE_FY    = -0.27f;
 static const int   NOSE_CX      = 120;
 static const int   NOSE_DX      = 17;
 static const int   NOSE_CY      = 116;
@@ -153,9 +159,9 @@ static void drawEye(LGFX_Sprite& spr, const FaceParams& p, int baseX, int dir,
   // reading as glossy and the face loses its cartoon character. Not worth
   // it. The gaze is carried by the eye translating instead.
   if (blink > 0.75f && h > 20.0f) {
-    const float hx = w * 0.23f, hy = -h * 0.25f;
+    const float hx = w * HILITE_FX, hy = h * HILITE_FY;
     fillRotRoundRect(spr, cx + hx * ca - hy * sa, cy + hx * sa + hy * ca,
-                     HILITE_SIZE, HILITE_SIZE, HILITE_RADIUS, ang, bg);
+                     HILITE_W, HILITE_H, HILITE_RADIUS, ang, bg);
   }
 }
 
