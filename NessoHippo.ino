@@ -142,6 +142,7 @@ static unsigned long s_lastFaceFrameMs  = 0;
 // matches HEARTBEAT_STALE_MS; set it to 120000 for the stricter reading.
 #define WELCOME_BACK_MS     HEARTBEAT_STALE_MS
 static unsigned long s_lastHeartbeatMs   = 0;
+static unsigned long s_maxGapMs          = 0;  // longest heartbeat silence
 static unsigned long s_faceCuriousUntilMs = 0;
 
 // Returned by faceStateFor() to mean "no discrete state applies — use the
@@ -537,7 +538,8 @@ void loop() {
     if (st != PS_ATTENTION) {
       s_statsOverlay = !s_statsOverlay;
       if (s_statsOverlay) {
-        uiRenderStats(snap, s_batPct, s_usbPlugged, persistLevel(snap));
+        uiRenderStats(snap, s_batPct, s_usbPlugged, persistLevel(snap),
+                      s_maxGapMs);
         s_statsEnteredMs = now;
       } else {
         uiClear();
@@ -609,6 +611,8 @@ void loop() {
   // flush on BLE disconnect (when the session ends is a natural moment
   // to checkpoint stats with no user impact).
   bool connectedNow = bleIsConnected();
+  const unsigned long gap = s_lastHeartbeatMs ? (now - s_lastHeartbeatMs) : 0UL;
+  if (connectedNow && gap > s_maxGapMs) s_maxGapMs = gap;
 #if BLE_DEBUG
   if (connectedNow != s_wasConnected) {
     Serial.printf("[ble] %s at t=%lus\n",
@@ -617,9 +621,6 @@ void loop() {
   // Cumulative, so the first line printed after the host wakes up reports
   // everything that happened while serial was dead.
   static unsigned long s_bleLogMs = 0;
-  static unsigned long s_maxGapMs = 0;
-  const unsigned long gap = s_lastHeartbeatMs ? (now - s_lastHeartbeatMs) : 0UL;
-  if (connectedNow && gap > s_maxGapMs) s_maxGapMs = gap;
   if (now - s_bleLogMs >= 5000) {
     s_bleLogMs = now;
     Serial.printf("[ble] t=%lus conn=%d hb_age=%lums maxgap=%lums "

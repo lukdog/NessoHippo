@@ -31,6 +31,7 @@ bool uiMapTouch(int16_t rawX, int16_t rawY, int16_t& x, int16_t& y);
 void uiRenderStats(const Snapshot& snap,
                    uint16_t batPct,
                    bool usbPlugged,
-                   uint16_t level);
+                   uint16_t level,
+                   unsigned long maxGapMs);
 
 void uiBacklight(bool on);

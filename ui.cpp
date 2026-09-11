@@ -18,6 +18,7 @@
 // both cases, so nothing outside this file may assume either is fixed.
 
 #include "ui.h"
+#include "ble_bridge.h"
 #include <Arduino_Nesso_N1.h>
 
 extern NessoDisplay display;
@@ -341,7 +342,8 @@ static void fmtDuration(uint32_t sec, char* buf, size_t bufsz) {
 void uiRenderStats(const Snapshot& snap,
                    uint16_t batPct,
                    bool usbPlugged,
-                   uint16_t level) {
+                   uint16_t level,
+                   unsigned long maxGapMs) {
   // The panel layout is portrait-only. A landscape persona lends it the
   // rotation for as long as it is up; uiClear() on dismissal puts the
   // persona's own rotation back.
@@ -403,6 +405,16 @@ void uiRenderStats(const Snapshot& snap,
   row("Heap",  String(buf), COLOR_DIM);
   snprintf(buf, sizeof(buf), "%u%%%s", (unsigned)batPct, usbPlugged ? " +" : "");
   row("Bat",   String(buf), COLOR_DIM);
+
+  // BLE link health. Readable on battery, which is the only way to watch
+  // what happens while the desk computer is suspended — on USB the host
+  // cuts power and the counters restart with the device.
+  snprintf(buf, sizeof(buf), "%u", (unsigned)bleDisconnects());
+  row("Disc",  String(buf), COLOR_DIM);
+  snprintf(buf, sizeof(buf), "%u", (unsigned)bleAdvKicks());
+  row("Adv",   String(buf), COLOR_DIM);
+  fmtDuration((uint32_t)(maxGapMs / 1000), buf, sizeof(buf));
+  row("MaxGap", String(buf), COLOR_DIM);
 
   // Footer hint.
   display.setTextColor(COLOR_DIM, COLOR_BLACK);
