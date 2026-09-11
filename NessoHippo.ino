@@ -103,6 +103,9 @@ static unsigned long s_statsEnteredMs    = 0;
 // Traces the resolved face state and mood to serial. Verification aid for
 // the section 14 acceptance run; off in normal use.
 #define FACE_DEBUG 0
+// Logs BLE connection transitions and heartbeat age. Diagnostic for the
+// "does not come back after the Mac locks" case.
+#define BLE_DEBUG 1
 static bool          s_wasTouched         = false;
 static unsigned long s_lastPetMs          = 0;
 static bool          s_touchReady         = false;
@@ -347,7 +350,9 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // 1. Drain BLE lines → protocol.
+  // 1. Drain BLE lines → protocol. bleTick() first, so a stale connection
+  //    flag is repaired before anything reads it this iteration.
+  bleTick();
   String line;
   while (blePopLine(line)) {
     fx = ProtocolFx{};
@@ -604,6 +609,20 @@ void loop() {
   // flush on BLE disconnect (when the session ends is a natural moment
   // to checkpoint stats with no user impact).
   bool connectedNow = bleIsConnected();
+#if BLE_DEBUG
+  if (connectedNow != s_wasConnected) {
+    Serial.printf("[ble] %s at t=%lus\n",
+                  connectedNow ? "CONNECTED" : "DISCONNECTED", now / 1000);
+  }
+  static unsigned long s_bleLogMs = 0;
+  if (now - s_bleLogMs >= 5000) {
+    s_bleLogMs = now;
+    Serial.printf("[ble] conn=%d hb_age=%lums light=%d heap=%uKB\n",
+                  (int)connectedNow,
+                  s_lastHeartbeatMs ? (now - s_lastHeartbeatMs) : 0UL,
+                  (int)s_backlightOn, (unsigned)(ESP.getFreeHeap() / 1024));
+  }
+#endif
   if (s_wasConnected && !connectedNow) {
     persistFlush(snap);
   }
