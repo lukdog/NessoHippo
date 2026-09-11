@@ -136,6 +136,11 @@ static unsigned long s_lastFaceFrameMs  = 0;
 // desktop is asleep or out of range. Coming back after a long silence
 // earns a brief "oh, you're back" CURIOUS.
 #define HEARTBEAT_STALE_MS  30000UL
+// A connected peer that stops sending for this long gets hung up on. Well
+// past any normal pause — the longest silence measured across a real
+// suspend was under two minutes — so this only fires when the link has
+// genuinely stopped carrying anything.
+#define LINK_STALE_MS      300000UL
 // Spec section 11 asks for the "oh, you're back" chirp after >2 minutes of
 // silence, but section 14 step 7 expects it after the 30 s that put the
 // face to sleep. Waking from ASLEEP is the coherent trigger, so this
@@ -630,6 +635,15 @@ void loop() {
                   (int)s_backlightOn, (unsigned)(ESP.getFreeHeap() / 1024));
   }
 #endif
+  // Connected to someone who stopped talking: hang up, so the watchdog can
+  // advertise again and the desktop has something to reconnect to.
+  if (connectedNow && s_lastHeartbeatMs && gap >= LINK_STALE_MS) {
+    Serial.printf("[ble] silent for %lus on an open link, dropping it\n",
+                  gap / 1000);
+    bleDropLink();
+    s_lastHeartbeatMs = now;   // don't re-fire while the drop settles
+  }
+
   if (s_wasConnected && !connectedNow) {
     persistFlush(snap);
   }

@@ -29,6 +29,7 @@ static portMUX_TYPE       s_rxMux      = portMUX_INITIALIZER_UNLOCKED;
 static unsigned long      s_lastAdvKickMs = 0;
 static uint32_t           s_disconnects   = 0;
 static uint32_t           s_advKicks      = 0;
+static uint32_t           s_forcedDrops   = 0;
 
 // How often bleTick() re-asserts advertising while disconnected. Starting
 // advertising that is already running is a no-op, so this only costs a
@@ -114,10 +115,9 @@ bool bleIsConnected() {
 // was still paired. So trust the stack's own connection count over our
 // flag, and re-assert advertising while there is nothing connected.
 //
-// Deliberately NOT done here: forcing a disconnect when heartbeats go
-// quiet. A locked screen leaves the link up and idle, and tearing down a
-// working link would be actively worse if the desktop does not reconnect
-// by itself.
+// The heartbeat-silence case is handled by the caller through
+// bleDropLink(), not here: this file knows about links, not about what is
+// supposed to come over them.
 void bleTick() {
   if (!s_server) return;
 
@@ -137,8 +137,21 @@ void bleTick() {
   BLEDevice::startAdvertising();
 }
 
-uint32_t bleDisconnects() { return s_disconnects; }
-uint32_t bleAdvKicks()    { return s_advKicks; }
+// Measured on hardware: the Mac can suspend and resume while holding the
+// link open the whole time, and the desktop then never resumes sending —
+// the device sat there connected to a peer that had stopped talking, and
+// only a manual Reconnect revived it. A link that delivers nothing is
+// worth nothing, so hang up and go back to advertising, which at least
+// gives the desktop something to reconnect to.
+void bleDropLink() {
+  if (!s_server || !s_connected) return;
+  s_forcedDrops++;
+  s_server->disconnect(s_server->getConnId());
+}
+
+uint32_t bleDisconnects()  { return s_disconnects; }
+uint32_t bleAdvKicks()     { return s_advKicks; }
+uint32_t bleForcedDrops()  { return s_forcedDrops; }
 
 bool blePopLine(String& out) {
   bool got = false;

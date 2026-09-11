@@ -409,7 +409,12 @@ void uiRenderStats(const Snapshot& snap,
   // BLE link health. Readable on battery, which is the only way to watch
   // what happens while the desk computer is suspended — on USB the host
   // cuts power and the counters restart with the device.
-  snprintf(buf, sizeof(buf), "%u", (unsigned)bleDisconnects());
+  if (bleForcedDrops() > 0) {
+    snprintf(buf, sizeof(buf), "%u (%u auto)", (unsigned)bleDisconnects(),
+             (unsigned)bleForcedDrops());
+  } else {
+    snprintf(buf, sizeof(buf), "%u", (unsigned)bleDisconnects());
+  }
   row("Disc",  String(buf), COLOR_DIM);
   snprintf(buf, sizeof(buf), "%u", (unsigned)bleAdvKicks());
   row("Adv",   String(buf), COLOR_DIM);

@@ -17,3 +17,8 @@ void bleTick();
 // advertising. Both count from boot.
 uint32_t bleDisconnects();
 uint32_t bleAdvKicks();
+uint32_t bleForcedDrops();
+
+// Hang up on a peer that holds the link open but has stopped talking.
+// No-op when not connected.
+void bleDropLink();
