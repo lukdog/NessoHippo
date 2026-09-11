@@ -77,10 +77,12 @@ static unsigned long s_statsEnteredMs    = 0;
 // touch. PET_REFRACTORY_MS keeps rapid repeated touches from spamming
 // the counter (still feels responsive at ~3 pets/sec).
 // The controller reports raw portrait coordinates regardless of the
-// display rotation, so every tap goes through uiMapTouch(). Set
-// TOUCH_DEBUG to 1 to log raw and mapped coordinates while checking that
-// a landscape persona registers pets in the right place.
-#define TOUCH_DEBUG 1
+// display rotation, so every tap goes through uiMapTouch(). Verified on
+// hardware in landscape: tapping the two eyes and a nostril lands within
+// 2-7 px on x, and the nostril reads near the bottom of the screen rather
+// than the top, which is what pins down the y direction. Set TOUCH_DEBUG
+// to 1 to log raw and mapped coordinates again.
+#define TOUCH_DEBUG 0
 // Traces the resolved face state and mood to serial. Verification aid for
 // the section 14 acceptance run; off in normal use.
 #define FACE_DEBUG 0
