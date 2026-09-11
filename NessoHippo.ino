@@ -57,6 +57,13 @@ static bool          s_usbPlugged = false;
 static unsigned long s_lastInteractionMs = 0;
 static bool          s_backlightOn       = true;
 #define AUTO_OFF_MS 30000UL
+// A sleeping face is worth leaving on: it reads as a creature napping,
+// where a black screen reads as a dead gadget. So when the only reason it
+// is asleep is that the computer is away, the backlight gets hours
+// instead of thirty seconds. Face-down is excluded — nobody is looking at
+// a screen pressed against the desk — and so is a prompt waiting, which
+// has its own rule below.
+#define ASLEEP_OFF_MS 7200000UL   // two hours
 
 // Waking back up. The screen used to be a one-way trip: the only things
 // that could switch it back on were a pending prompt or USB power, and
@@ -129,6 +136,10 @@ static bool          s_wasConnected      = false;
 // clock instead of riding the loop period: the parameter interpolation is
 // tuned for 30 fps and a 64 KB sprite push costs ~13 ms over SPI.
 #define FACE_FRAME_MS          33UL
+// The sleeping face moves by one pixel of breathing and nothing else, so
+// it does not need 30 fps for hours on end. The interpolation is scaled by
+// measured frame time, so slowing down costs nothing but power.
+#define FACE_ASLEEP_FRAME_MS  200UL
 static unsigned long s_lastFaceFrameMs  = 0;
 
 // NessoFace's ASLEEP rule is "the owner is not at the desk", approximated
@@ -592,6 +603,12 @@ void loop() {
   // message (handled by s_lastInteractionMs updates above).
   if (st == PS_ATTENTION) s_lastInteractionMs = now;
 
+  // Asleep purely because the computer is away, and still worth looking at.
+  const bool restingFace = g_activeBuddy && g_activeBuddy->ownsFullScreen &&
+                           computerAway(now) && !motionFaceDown() &&
+                           st != PS_ATTENTION;
+  const unsigned long offMs = restingFace ? ASLEEP_OFF_MS : AUTO_OFF_MS;
+
   // A peek has its own short deadline: the eye is already shutting by the
   // time this fires, so the screen goes dark on a closed eye.
   if (s_peekOffAtMs && now >= s_peekOffAtMs) {
@@ -605,7 +622,7 @@ void loop() {
   }
 
   if (s_backlightOn && !s_usbPlugged && !s_peekOffAtMs &&
-      now - s_lastInteractionMs >= AUTO_OFF_MS) {
+      now - s_lastInteractionMs >= offMs) {
     uiBacklight(false);
     s_backlightOn = false;
   } else if (!s_backlightOn && (st == PS_ATTENTION || s_usbPlugged)) {
@@ -662,7 +679,9 @@ void loop() {
     } else if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
       // A full-screen persona drives itself from the parameter vector, on
       // its own 30 fps clock.
-      if (now - s_lastFaceFrameMs >= FACE_FRAME_MS) {
+      const unsigned long framePeriod =
+          restingFace ? FACE_ASLEEP_FRAME_MS : FACE_FRAME_MS;
+      if (now - s_lastFaceFrameMs >= framePeriod) {
         s_lastFaceFrameMs = now;
         const FaceState fs = faceStateFor(st, now);
         const float mood = moodValue(snap);
