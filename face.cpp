@@ -22,11 +22,12 @@ static const float EYE_BASE_H   = 56.0f;
 static const float EYE_BASE_W   = 50.0f;
 static const float EYE_RADIUS   = 17.0f;
 static const float EYE_SHADOW_DY= 4.0f;
-static const float GAZE_X_PX    = 7.0f;   // px of travel per unit pupilX
-static const float GAZE_Y_PX    = 6.0f;
+static const float GAZE_X_PX    = 15.0f;  // px of travel per unit pupilX
+static const float GAZE_Y_PX    = 11.0f;
 static const float LID_TILT_RAD = 0.20f;  // radians per unit lidTilt
 static const float HILITE_SIZE  = 11.0f;
 static const float HILITE_RADIUS= 5.0f;
+static const float HILITE_TRAVEL= 0.26f;  // share of the eye the pupil crosses
 static const int   NOSE_CX      = 120;
 static const int   NOSE_DX      = 17;
 static const int   NOSE_CY      = 116;
@@ -129,10 +130,11 @@ static void fillRotRoundRect(LGFX_Sprite& spr, float cx, float cy,
 
 static void drawEye(LGFX_Sprite& spr, const FaceParams& p, int baseX, int dir,
                     float w, float h, float bounceOff, float blink,
+                    float lidTilt,
                     uint16_t dark, uint16_t white, uint16_t bg) {
   const float cx  = (float)baseX + p.pupilX * GAZE_X_PX;
   const float cy  = (float)EYE_CY + bounceOff + p.pupilY * GAZE_Y_PX;
-  const float ang = (float)dir * p.lidTilt * LID_TILT_RAD;
+  const float ang = (float)dir * lidTilt * LID_TILT_RAD;
   // Clamped so a nearly-closed eye stays a capsule instead of glitching.
   float r = EYE_RADIUS;
   if (r > h * 0.5f) r = h * 0.5f;
@@ -146,9 +148,14 @@ static void drawEye(LGFX_Sprite& spr, const FaceParams& p, int baseX, int dir,
   fillRotRoundRect(spr, cx, cy + EYE_SHADOW_DY, w, h, r, ang, dark);
   fillRotRoundRect(spr, cx, cy, w, h, r, ang, white);
 
-  // Highlight: a square of the background cut into the eye, not a sheen.
+  // The square of background cut into the eye is the only thing inside it,
+  // so it is what reads as the direction of the gaze — parked up and to
+  // the right, it made the face stare that way permanently. Moving it with
+  // the gaze turns it into a pupil, which is the point. It costs the eye
+  // its glossy-highlight character and buys a face that looks at things.
   if (blink > 0.75f && h > 20.0f) {
-    const float hx = w * 0.23f, hy = -h * 0.25f;
+    const float hx = p.pupilX * w * HILITE_TRAVEL;
+    const float hy = p.pupilY * h * HILITE_TRAVEL;
     fillRotRoundRect(spr, cx + hx * ca - hy * sa, cy + hx * sa + hy * ca,
                      HILITE_SIZE, HILITE_SIZE, HILITE_RADIUS, ang, bg);
   }
@@ -156,7 +163,7 @@ static void drawEye(LGFX_Sprite& spr, const FaceParams& p, int baseX, int dir,
 
 // blink: 1 = fully open, 0 = shut. Animation lands in a later commit.
 static void faceDraw(LGFX_Sprite& spr, const FaceParams& p, float blink,
-                     float bounceOff, float noseQuiver) {
+                     float bounceOff, float noseQuiver, float tiltRock) {
   const uint16_t bg    = hsv565(p.bgHue,        0.78f, 0.95f);
   const uint16_t dark  = hsv565(p.bgHue - 8.0f, 0.88f, 0.40f);
   const uint16_t white = 0xFFFF;
@@ -175,8 +182,11 @@ static void faceDraw(LGFX_Sprite& spr, const FaceParams& p, float blink,
   if (hL < 5.0f) hL = 5.0f;
   if (hR < 5.0f) hR = 5.0f;
 
-  drawEye(spr, p, EYE_LEFT_X,  +1, w, hL, bounceOff, blink, dark, white, bg);
-  drawEye(spr, p, EYE_RIGHT_X, -1, w, hR, bounceOff, blink, dark, white, bg);
+  const float lidTilt = p.lidTilt + tiltRock;
+  drawEye(spr, p, EYE_LEFT_X,  +1, w, hL, bounceOff, blink, lidTilt,
+          dark, white, bg);
+  drawEye(spr, p, EYE_RIGHT_X, -1, w, hR, bounceOff, blink, lidTilt,
+          dark, white, bg);
 
   const float noseW = NOSE_BASE_W + lerpf(0.0f, NOSE_MAX_FLARE, joyT)
                       + noseQuiver;
@@ -201,8 +211,18 @@ static const uint32_t GAZE_MIN_MS     = 1900;
 static const uint32_t GAZE_MAX_MS     = 4300;
 static const uint32_t GAZE_BUSY_MIN_MS= 800;
 static const uint32_t GAZE_BUSY_MAX_MS= 3200;
-static const float    GAZE_RANGE_X    = 0.45f;
-static const float    GAZE_RANGE_Y    = 0.35f;
+static const float    GAZE_RANGE_X    = 0.60f;
+static const float    GAZE_RANGE_Y    = 0.50f;
+// BUSY reads a line rather than wandering: fixed stops left to right, then
+// one more phase that flicks back to the start.
+static const uint32_t READ_STEP_MS    = 420;
+static const float    READ_STOPS[]    = { -0.85f, -0.45f, -0.05f,
+                                           0.35f,  0.75f };
+static const float    READ_LINE_Y     = 0.10f;
+static const float    READ_RETURN_Y   = 0.18f;
+// CURIOUS rocks the lids back and forth, which reads as a head tilt.
+static const float    TILT_ROCK_AMP   = 0.28f;
+static const uint32_t TILT_ROCK_MS    = 2600;
 static const uint32_t NOSE_QUIVER_MS  = 300;
 static const float    NOSE_QUIVER_AMP = 1.2f;
 
@@ -230,6 +250,8 @@ static FaceParams s_target = STATE_TABLE[FS_HAPPY];
 static FaceParams s_cur    = STATE_TABLE[FS_HAPPY];
 static float      s_blink     = 1.0f;
 static float      s_bounceOff = 0.0f;
+static float      s_tiltRock  = 0.0f;
+static float      s_tiltEnv   = 0.0f;   // eased 0..1, so the rock never snaps
 static bool       s_seeded    = false;
 static uint32_t   s_lastTickMs = 0;
 
@@ -303,7 +325,16 @@ static void updateBlink(uint32_t now) {
 // A snappy saccade looks alive; a slow glide looks sleepy. Hence the fast
 // lerp, and hence gaze being excluded from the parameter interpolation.
 static void updateGaze(uint32_t now, float rate) {
-  if ((int32_t)(now - s_nextGazeMs) >= 0) {
+  if (s_state == FS_BUSY) {
+    // Stepping along a line is the one thing that reads as an activity
+    // rather than a mood. Keep s_nextGazeMs current so leaving BUSY
+    // retargets immediately instead of finishing a stale timer.
+    const int n = (int)(sizeof(READ_STOPS) / sizeof(READ_STOPS[0]));
+    const int i = (int)((now / READ_STEP_MS) % (uint32_t)(n + 1));
+    s_gazeTargetX = READ_STOPS[i == n ? 0 : i];
+    s_gazeTargetY = (i == n) ? READ_RETURN_Y : READ_LINE_Y;
+    s_nextGazeMs  = now;
+  } else if ((int32_t)(now - s_nextGazeMs) >= 0) {
     s_gazeTargetX = randf(GAZE_RANGE_X);
     s_gazeTargetY = randf(GAZE_RANGE_Y);
     const bool busy = (s_state == FS_BUSY);
@@ -346,6 +377,16 @@ const FaceParams& faceTick(uint32_t nowMs) {
   updateGaze(nowMs, g);
   s_bounceOff = s_cur.bounce *
                 sinf((float)(nowMs % BREATH_MS) * TWO_PI_F / (float)BREATH_MS);
+
+  // Head tilt, kept out of FaceParams like blink and the breathing offset:
+  // it is a per-frame modifier and must never be interpolated. The
+  // envelope eases the whole oscillation in and out, so entering or
+  // leaving CURIOUS mid-swing does not jump the lids.
+  const float tiltWanted = (s_state == FS_CURIOUS) ? 1.0f : 0.0f;
+  s_tiltEnv += (tiltWanted - s_tiltEnv) * k;
+  s_tiltRock = TILT_ROCK_AMP * s_tiltEnv *
+               sinf((float)(nowMs % TILT_ROCK_MS) * TWO_PI_F /
+                    (float)TILT_ROCK_MS);
   return s_cur;
 }
 
@@ -356,7 +397,7 @@ static void faceDrawFull(LGFX_Sprite& spr, const FaceParams& p, uint32_t nowMs) 
           ? NOSE_QUIVER_AMP * sinf((float)(nowMs % NOSE_QUIVER_MS) *
                                    TWO_PI_F / (float)NOSE_QUIVER_MS)
           : 0.0f;
-  faceDraw(spr, p, s_blink, s_bounceOff, quiver);
+  faceDraw(spr, p, s_blink, s_bounceOff, quiver, s_tiltRock);
 }
 
 const Buddy FACE_BUDDY = { "face", nullptr, nullptr, faceDrawFull, true };
