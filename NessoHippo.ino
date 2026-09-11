@@ -147,11 +147,13 @@ static unsigned long s_lastFaceFrameMs  = 0;
 // desktop is asleep or out of range. Coming back after a long silence
 // earns a brief "oh, you're back" CURIOUS.
 #define HEARTBEAT_STALE_MS  30000UL
-// A connected peer that stops sending for this long gets hung up on. Well
-// past any normal pause — the longest silence measured across a real
-// suspend was under two minutes — so this only fires when the link has
-// genuinely stopped carrying anything.
-#define LINK_STALE_MS      300000UL
+// A connected peer that stops sending for this long gets hung up on.
+// Tuned from measurements rather than caution: the worst gap between
+// heartbeats in normal use is about 11 s, so this is an order of
+// magnitude past anything healthy, and a reconnect costs about 3 s. Five
+// minutes was the first guess and it was far too patient — the face sits
+// there looking broken for the whole wait, which is the actual complaint.
+#define LINK_STALE_MS      120000UL
 // Spec section 11 asks for the "oh, you're back" chirp after >2 minutes of
 // silence, but section 14 step 7 expects it after the 30 s that put the
 // face to sleep. Waking from ASLEEP is the coherent trigger, so this
