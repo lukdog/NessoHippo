@@ -27,7 +27,6 @@ static const float GAZE_Y_PX    = 11.0f;
 static const float LID_TILT_RAD = 0.20f;  // radians per unit lidTilt
 static const float HILITE_SIZE  = 11.0f;
 static const float HILITE_RADIUS= 5.0f;
-static const float HILITE_TRAVEL= 0.26f;  // share of the eye the pupil crosses
 static const int   NOSE_CX      = 120;
 static const int   NOSE_DX      = 17;
 static const int   NOSE_CY      = 116;
@@ -148,14 +147,13 @@ static void drawEye(LGFX_Sprite& spr, const FaceParams& p, int baseX, int dir,
   fillRotRoundRect(spr, cx, cy + EYE_SHADOW_DY, w, h, r, ang, dark);
   fillRotRoundRect(spr, cx, cy, w, h, r, ang, white);
 
-  // The square of background cut into the eye is the only thing inside it,
-  // so it is what reads as the direction of the gaze — parked up and to
-  // the right, it made the face stare that way permanently. Moving it with
-  // the gaze turns it into a pupil, which is the point. It costs the eye
-  // its glossy-highlight character and buys a face that looks at things.
+  // Highlight: a square of the background cut into the eye, not a sheen,
+  // and deliberately fixed. Tried tracking it to the gaze so it would read
+  // as a pupil and point the look somewhere: it works, but the eye stops
+  // reading as glossy and the face loses its cartoon character. Not worth
+  // it. The gaze is carried by the eye translating instead.
   if (blink > 0.75f && h > 20.0f) {
-    const float hx = p.pupilX * w * HILITE_TRAVEL;
-    const float hy = p.pupilY * h * HILITE_TRAVEL;
+    const float hx = w * 0.23f, hy = -h * 0.25f;
     fillRotRoundRect(spr, cx + hx * ca - hy * sa, cy + hx * sa + hy * ca,
                      HILITE_SIZE, HILITE_SIZE, HILITE_RADIUS, ang, bg);
   }
