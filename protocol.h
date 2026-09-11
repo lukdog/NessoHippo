@@ -20,6 +20,7 @@ struct Snapshot {
   String   buddyName   = "Clawd";
   String   ownerName;
   bool     muted       = false;       // KEY1 long-press toggles; persisted
+  uint8_t  persona     = 1;           // 0 = cat, 1 = face; KEY2 cycles
   // Mood baseline — the owner's own recent daily token average, and the
   // day tracking that advances it. Persisted; 0 baseline means unseeded.
   float    tokenBaseline   = 0.0f;
@@ -40,6 +41,7 @@ struct ProtocolFx {
   bool nameChanged     = false;
   bool unpaired        = false;       // → SLEEP + drop connection
   bool statusRequested = false;       // → main loop sends a status reply
+  bool heartbeat       = false;       // → owner is at the desk
 };
 
 void protocolHandleLine(const String& line, Snapshot& s, ProtocolFx& fx);

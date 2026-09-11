@@ -51,6 +51,7 @@ void protocolHandleLine(const String& line, Snapshot& s, ProtocolFx& fx) {
       s.promptTool = "";
       s.promptHint = "";
     }
+    fx.heartbeat = true;
     return; // no ack for heartbeats (they're unsolicited)
   }
 

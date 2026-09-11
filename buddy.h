@@ -40,6 +40,9 @@ typedef void (*BuddyDrawFullFn)(LGFX_Sprite& spr, const FaceParams& p,
 // (rather than virtual methods) lets us hold a const Buddy in flash.
 // A buddy is either frame-based (frameIndex + drawFrame, the ASCII pets)
 // or full-screen parametric (drawFull + ownsFullScreen); never both.
+// The two full-screen members must stay LAST: cat.cpp is byte-identical
+// to upstream and relies on aggregate zero-init to get nullptr/false for
+// them, so reordering these fields would silently break the cat.
 struct Buddy {
   const char*       name;
   BuddyFrameIndexFn frameIndex;      // null for full-screen buddies

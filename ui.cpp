@@ -28,6 +28,11 @@ static const int H = 240;
 // Landscape geometry — full-screen personas.
 static const int FULL_W = 240;
 static const int FULL_H = 135;
+// The physical glass, which is what the touch controller reports in no
+// matter what the display is doing. Not the same thing as the portrait
+// screen width, even though the numbers coincide.
+static const int PANEL_SHORT = 135;
+static const int PANEL_LONG  = 240;
 
 // Rotation 1 is the library's own verified landscape orientation; the
 // ST7789 memory offsets are recomputed per rotation by the panel driver.
@@ -48,8 +53,18 @@ static const int APPROVAL_H = 70;
 static const int BUDDY_TOP = HUD_H + 2;
 static const int BUDDY_H   = H - BUDDY_TOP - 2;
 
-static LGFX_Sprite s_buddySprite(&display);
-static bool       s_spriteReady = false;
+// One sprite per persona, allocated on first activation and then kept.
+// Freeing and reclaiming 63 KB on every persona switch is how a heap
+// shared with NimBLE gets fragmented, and a failed reallocation would
+// leave nothing to draw into.
+static LGFX_Sprite  s_catSprite(&display);
+static LGFX_Sprite  s_faceSprite(&display);
+static LGFX_Sprite* s_sprite = nullptr;   // the active one, null if unusable
+
+// What is actually on the panel right now. The stats panel borrows
+// portrait from a landscape persona, so this cannot be derived from the
+// active buddy.
+static uint8_t s_panelRotation = ROT_PORTRAIT;
 
 // Cached HUD state so we only repaint when something changes.
 static int       s_lastRunning = -1;
@@ -69,49 +84,63 @@ static bool         s_buddyForceRedraw = true;
 
 // Allocate the sprite once per persona activation — 240x135x16bpp is
 // ~63 KB, far too much to churn per frame.
+static void setPanelRotation(uint8_t r) {
+  s_panelRotation = r;
+  display.setRotation(r);
+}
+
 void uiSetBuddy(const Buddy* b) {
   if (!b) return;
   g_activeBuddy = b;
 
-  if (s_spriteReady) {
-    s_buddySprite.deleteSprite();
-    s_spriteReady = false;
+  LGFX_Sprite* spr = b->ownsFullScreen ? &s_faceSprite : &s_catSprite;
+  const int w = b->ownsFullScreen ? FULL_W : W;
+  const int h = b->ownsFullScreen ? FULL_H : BUDDY_H;
+  if (spr->width() != w) {
+    spr->setColorDepth(16);
+    spr->createSprite(w, h);
+    if (spr->width() != w) {
+      Serial.printf("uiSetBuddy: %dx%d sprite alloc failed, "
+                    "largest free block %u B\n",
+                    w, h, (unsigned)ESP.getMaxAllocHeap());
+      spr = nullptr;
+    }
   }
-  display.setRotation(b->ownsFullScreen ? ROT_LANDSCAPE : ROT_PORTRAIT);
+  s_sprite = spr;
 
-  int w = b->ownsFullScreen ? FULL_W : W;
-  int h = b->ownsFullScreen ? FULL_H : BUDDY_H;
-  s_buddySprite.setColorDepth(16);
-  s_buddySprite.createSprite(w, h);
-  s_spriteReady = (s_buddySprite.width() == w);
-
+  setPanelRotation(b->ownsFullScreen ? ROT_LANDSCAPE : ROT_PORTRAIT);
   uiClear();
 }
 
-void uiBegin() {
-  uiSetBuddy(g_activeBuddy);
+void uiBegin(const Buddy* b) {
+  uiSetBuddy(b);
 }
 
 // NessoTouch (FT6x36) reports raw portrait panel coordinates and knows
 // nothing about the display rotation, so a landscape persona has to remap
 // or every pet lands in the wrong place.
 bool uiMapTouch(int16_t rawX, int16_t rawY, int16_t& x, int16_t& y) {
-  if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
+  // Validate the raw ranges: after mapping, any raw input is in bounds by
+  // construction, so a post-hoc check would catch nothing.
+  if (rawX < 0 || rawY < 0 || rawX >= PANEL_SHORT || rawY >= PANEL_LONG) {
+    return false;
+  }
+  if (s_panelRotation == ROT_LANDSCAPE) {
     x = rawY;
-    y = (int16_t)(W - 1 - rawX);
+    y = (int16_t)(PANEL_SHORT - 1 - rawX);
   } else {
     x = rawX;
     y = rawY;
   }
-  return (x >= 0 && y >= 0 && x < display.width() && y < display.height());
+  return true;
 }
 
 void uiClear() {
-  if (g_activeBuddy) {
-    display.setRotation(g_activeBuddy->ownsFullScreen ? ROT_LANDSCAPE
-                                                      : ROT_PORTRAIT);
-  }
-  display.fillScreen(COLOR_BLACK);
+  const bool fullScreen = g_activeBuddy && g_activeBuddy->ownsFullScreen;
+  setPanelRotation(fullScreen ? ROT_LANDSCAPE : ROT_PORTRAIT);
+  // A full-screen persona repaints every pixel on its next frame, so
+  // blanking first would only flash black over a bright background.
+  if (!fullScreen) display.fillScreen(COLOR_BLACK);
   s_lastRunning = -1;
   s_lastWaiting = -1;
   s_lastMsg = "";
@@ -223,11 +252,10 @@ void uiRender(PersonaState state,
   // fill, the ASCII draw and the HUD entirely and just hand over the
   // sprite. It repaints every frame, so there is no frame-skip cache.
   if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
-    if (!s_spriteReady || !g_activeBuddy->drawFull || !face) return;
-    g_activeBuddy->drawFull(s_buddySprite, *face, (uint32_t)millis());
-    s_buddySprite.pushSprite(0, 0);
-    s_dirty = false;
-    return;
+    if (!s_sprite || !g_activeBuddy->drawFull || !face) return;
+    g_activeBuddy->drawFull(*s_sprite, *face, (uint32_t)millis());
+    s_sprite->pushSprite(0, 0);
+    return;   // leave s_dirty alone: the cat path owes a fillScreen
   }
 
   bool hudChanged =
@@ -265,12 +293,12 @@ void uiRender(PersonaState state,
                       state    != s_lastBuddyState ||
                       frameIdx != s_lastBuddyFrame;
 
-  if (buddyChanged && s_spriteReady && g_activeBuddy && g_activeBuddy->drawFrame) {
-    s_buddySprite.fillSprite(COLOR_BLACK);
+  if (buddyChanged && s_sprite && g_activeBuddy && g_activeBuddy->drawFrame) {
+    s_sprite->fillSprite(COLOR_BLACK);
     int cx = W / 2;
     int cy = BUDDY_H / 2;
-    g_activeBuddy->drawFrame(s_buddySprite, state, frameIdx, cx, cy);
-    s_buddySprite.pushSprite(0, BUDDY_TOP);
+    g_activeBuddy->drawFrame(*s_sprite, state, frameIdx, cx, cy);
+    s_sprite->pushSprite(0, BUDDY_TOP);
     s_lastBuddyState   = state;
     s_lastBuddyFrame   = frameIdx;
     s_buddyForceRedraw = false;
@@ -317,7 +345,7 @@ void uiRenderStats(const Snapshot& snap,
   // The panel layout is portrait-only. A landscape persona lends it the
   // rotation for as long as it is up; uiClear() on dismissal puts the
   // persona's own rotation back.
-  display.setRotation(ROT_PORTRAIT);
+  setPanelRotation(ROT_PORTRAIT);
   display.fillScreen(COLOR_BLACK);
 
   // Title bar.

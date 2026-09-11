@@ -31,6 +31,7 @@
 #include "motion.h"
 #include "ui.h"
 #include "persist.h"
+#include "mood.h"
 
 NessoDisplay display;
 NessoBattery battery;
@@ -104,9 +105,18 @@ static bool          s_wasConnected      = false;
 #define FACE_FRAME_MS          33UL
 static unsigned long s_lastFaceFrameMs  = 0;
 
-// Temporary tuning aid (this commit only): KEY2 short-press steps through
-// the state table so every mood can be checked on the real panel.
-static FaceState     s_faceTuneState     = FS_HAPPY;
+// NessoFace's ASLEEP rule is "the owner is not at the desk", approximated
+// by the BLE heartbeat: no snapshot for HEARTBEAT_STALE_MS means the
+// desktop is asleep or out of range. Coming back after a long silence
+// earns a brief "oh, you're back" CURIOUS.
+#define HEARTBEAT_STALE_MS  30000UL
+#define WELCOME_BACK_MS    120000UL
+static unsigned long s_lastHeartbeatMs   = 0;
+static unsigned long s_faceCuriousUntilMs = 0;
+
+// Returned by faceStateFor() to mean "no discrete state applies — use the
+// mood-driven resting blend".
+static const FaceState FS_MOOD_IDLE = FS_COUNT;
 
 // Buzzer state machine (copied pattern from NessoHourglass).
 struct Note { uint16_t freq; uint16_t durMs; };
@@ -210,6 +220,31 @@ static PersonaState deriveBase() {
   return PS_IDLE;
 }
 
+// NessoFace's priority order (spec section 11), mapped off the persona
+// state machine above. The face has a different vocabulary from the cat:
+// no CELEBRATE, no ATTENTION overlay, and a resting state that is a blend
+// rather than a table row. ASLEEP is checked first and independently, so
+// it outranks the one-shots.
+static FaceState faceStateFor(PersonaState st, unsigned long now) {
+  if (!bleIsConnected() || motionFaceDown() || !s_backlightOn ||
+      now - s_lastHeartbeatMs >= HEARTBEAT_STALE_MS) {
+    return FS_ASLEEP;
+  }
+  switch (st) {
+    case PS_DIZZY:     return FS_DIZZY;
+    case PS_HEART:     return FS_HEART;
+    // Approving something is a positive beat and HEART is the face's only
+    // positive one-shot, so the celebrate jingle is not left silent.
+    case PS_CELEBRATE: return FS_HEART;
+    case PS_ATTENTION: return FS_CURIOUS;
+    case PS_BUSY:      return FS_BUSY;
+    default:           break;
+  }
+  if (snap.waiting > 0)               return FS_CURIOUS;
+  if (now < s_faceCuriousUntilMs)     return FS_CURIOUS;
+  return FS_MOOD_IDLE;
+}
+
 static PersonaState currentState() {
   if (s_oneShotActive) {
     if (millis() - s_oneShotStartMs < ONE_SHOT_MS) return s_oneShotState;
@@ -243,11 +278,12 @@ void setup() {
 
   setupBuzzer();
 
-  uiBegin();
-
   // Load persisted state BEFORE BLE comes up, so the first heartbeat /
   // status request already sees the prior totals + buddy/owner names.
+  // Also before uiBegin(), which needs the persona to size its sprite.
   persistBegin(snap);
+
+  uiBegin(snap.persona ? &FACE_BUDDY : &CAT_BUDDY);
 
   bleBegin("Claude");
 
@@ -263,6 +299,13 @@ void loop() {
     fx = ProtocolFx{};
     protocolHandleLine(line, snap, fx);
 
+    if (fx.heartbeat) {
+      if (s_lastHeartbeatMs != 0 &&
+          now - s_lastHeartbeatMs >= WELCOME_BACK_MS) {
+        s_faceCuriousUntilMs = now + ONE_SHOT_MS;
+      }
+      s_lastHeartbeatMs = now;
+    }
     if (fx.statusRequested) {
       bleSendLine(protocolBuildStatus(snap, s_usbPlugged, s_batPct));
     }
@@ -310,14 +353,16 @@ void loop() {
   //     is up (a tap there means "dismiss", handled below) and while a
   //     permission prompt is pending (don't bury the user's intent to
   //     hit a physical button by playing the heart melody).
-  int16_t rawX = 0, rawY = 0;
-  bool touchedNow = s_touchReady && touch.read(rawX, rawY);
+  bool touchedNow = s_touchReady && touch.isTouched();
   if (touchedNow && !s_wasTouched && !s_statsOverlay && !snap.hasPrompt) {
-    int16_t tx = 0, ty = 0;
-    bool onScreen = uiMapTouch(rawX, rawY, tx, ty);
+    // read() only once, and only after the edge: it fetches the coordinate
+    // registers before the status register, so a finger that lands between
+    // the two transactions yields the previous touch point.
+    int16_t rawX = 0, rawY = 0, tx = 0, ty = 0;
+    bool onScreen = touch.read(rawX, rawY) && uiMapTouch(rawX, rawY, tx, ty);
 #if TOUCH_DEBUG
     Serial.printf("tap raw=(%d,%d) -> screen=(%d,%d) %s\n",
-                  rawX, rawY, tx, ty, onScreen ? "ok" : "OFF-SCREEN");
+                  rawX, rawY, tx, ty, onScreen ? "ok" : "rejected");
 #endif
     if (onScreen && now - s_lastPetMs >= PET_REFRACTORY_MS) {
       triggerOneShot(PS_HEART);
@@ -444,10 +489,11 @@ void loop() {
       snap.hasPrompt = false;
       triggerOneShot(PS_CELEBRATE);
       playBeep(440, 120);
-    } else if (g_activeBuddy && g_activeBuddy->ownsFullScreen) {
-      s_faceTuneState = (FaceState)((s_faceTuneState + 1) % FS_COUNT);
-      faceSetState(s_faceTuneState);
-      Serial.printf("face state -> %d\n", (int)s_faceTuneState);
+    } else {
+      // No prompt pending and no stats panel: cycle the persona.
+      snap.persona = (uint8_t)((snap.persona + 1) % 2);
+      persistMarkDirty();
+      uiSetBuddy(snap.persona ? &FACE_BUDDY : &CAT_BUDDY);
     }
   }
   lastK1 = k1;
@@ -500,6 +546,9 @@ void loop() {
       // its own 30 fps clock.
       if (now - s_lastFaceFrameMs >= FACE_FRAME_MS) {
         s_lastFaceFrameMs = now;
+        const FaceState fs = faceStateFor(st, now);
+        if (fs == FS_MOOD_IDLE) faceSetMood(moodValue(snap));
+        else                    faceSetState(fs);
         uiRender(st, snap, s_usbPlugged, s_batPct, &faceTick((uint32_t)now));
       }
     } else {

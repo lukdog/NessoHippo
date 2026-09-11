@@ -36,6 +36,7 @@ void persistBegin(Snapshot& s) {
   s.napSeconds   = s_prefs.getUInt("nap",   0);
   s.petCount     = s_prefs.getUInt("pets",  0);
   s.muted        = s_prefs.getBool("muted", false);
+  s.persona      = s_prefs.getUChar("persona", 1);   // NessoFace by default
 
   s.tokenBaseline   = s_prefs.getFloat("base",  0.0f);
   s.lastDayIndex    = s_prefs.getUInt ("day",   0);
@@ -64,6 +65,7 @@ void persistFlush(const Snapshot& s) {
   s_prefs.putUInt("nap",   s.napSeconds);
   s_prefs.putUInt("pets",  s.petCount);
   s_prefs.putBool("muted", s.muted);
+  s_prefs.putUChar("persona", s.persona);
   s_prefs.putFloat("base",  s.tokenBaseline);
   s_prefs.putUInt ("day",   s.lastDayIndex);
   s_prefs.putUInt ("tokyd", (uint32_t)(s.tokensYesterday < 0 ? 0

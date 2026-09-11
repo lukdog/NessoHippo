@@ -4,7 +4,8 @@
 #include "buddy.h"
 #include "protocol.h"
 
-void uiBegin();
+// Pass the persona to start with; also allocates its sprite.
+void uiBegin(const Buddy* b);
 void uiClear();
 
 // Activate a persona: sets the display rotation it needs and (re)allocates

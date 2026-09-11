@@ -33,6 +33,10 @@ extern const Buddy FACE_BUDDY;
 // Set the parameter target. Cheap and idempotent — call it every loop.
 void faceSetState(FaceState st);
 
+// The resting state: target a blend of the SAD and HAPPY rows, by mood
+// (0 = miserable, 1 = delighted). Also idempotent.
+void faceSetMood(float mood);
+
 // Advance one animation frame (blink, breath, gaze, interpolation) and
 // return the parameters for it. Expects to be called at ~30 fps.
 const FaceParams& faceTick(uint32_t nowMs);

@@ -135,9 +135,10 @@ static void drawEye(LGFX_Sprite& spr, const FaceParams& p, int baseX, int dir,
 
   const float ca = cosf(ang), sa = sinf(ang);
 
-  // Hard drop shadow: the same shape, offset down in the eye's own frame.
-  fillRotRoundRect(spr, cx - EYE_SHADOW_DY * sa, cy + EYE_SHADOW_DY * ca,
-                   w, h, r, ang, dark);
+  // Hard drop shadow: the same shape, offset straight down in screen
+  // space. Rotating the offset with the eye would swing the light
+  // direction around, which is exactly what a flat shadow must not do.
+  fillRotRoundRect(spr, cx, cy + EYE_SHADOW_DY, w, h, r, ang, dark);
   fillRotRoundRect(spr, cx, cy, w, h, r, ang, white);
 
   // Highlight: a square of the background cut into the eye, not a sheen.
@@ -178,6 +179,7 @@ static void faceDraw(LGFX_Sprite& spr, const FaceParams& p, float blink,
 // ---- animation tuning (spec sections 6 and 9) ----
 static const float    LERP_RATE       = 0.05f;  // ~1 s settle at 30 fps
 static const float    GAZE_LERP       = 0.30f;  // deliberately snappy
+static const float    FRAME_REF_MS    = 33.0f;  // the fps those rates assume
 static const uint32_t BLINK_MIN_MS    = 2600;
 static const uint32_t BLINK_MAX_MS    = 6000;
 static const uint32_t BLINK_MS        = 150;
@@ -215,6 +217,7 @@ static FaceParams s_cur    = STATE_TABLE[FS_HAPPY];
 static float      s_blink     = 1.0f;
 static float      s_bounceOff = 0.0f;
 static bool       s_seeded    = false;
+static uint32_t   s_lastTickMs = 0;
 
 static uint32_t s_nextBlinkMs  = 0;
 static uint32_t s_blinkStartMs = 0;
@@ -242,6 +245,23 @@ void faceSetState(FaceState st) {
   s_target = STATE_TABLE[st];
 }
 
+// The resting state. Parks s_state at FS_HAPPY so the gaze cadence and the
+// nostrils use their calm timings rather than the BUSY ones; the discrete
+// state machine never asks for FS_HAPPY or FS_SAD directly, they exist
+// only as the endpoints of this blend.
+void faceSetMood(float mood) {
+  if (mood < 0.0f) mood = 0.0f;
+  if (mood > 1.0f) mood = 1.0f;
+  const FaceParams& sad = STATE_TABLE[FS_SAD];
+  const FaceParams& happy = STATE_TABLE[FS_HAPPY];
+  s_state = FS_HAPPY;
+  s_target.eyeOpen = lerpf(sad.eyeOpen, happy.eyeOpen, mood);
+  s_target.lidTilt = lerpf(sad.lidTilt, happy.lidTilt, mood);
+  s_target.joy     = lerpf(sad.joy,     happy.joy,     mood);
+  s_target.bounce  = lerpf(sad.bounce,  happy.bounce,  mood);
+  s_target.bgHue   = lerpf(sad.bgHue,   happy.bgHue,   mood);  // 210->88
+}
+
 // Squash-and-stretch, not a fade: the blink also widens the eye by 12%
 // (see the w formula), which is what makes it read as modern.
 static void updateBlink(uint32_t now) {
@@ -266,7 +286,7 @@ static void updateBlink(uint32_t now) {
 
 // A snappy saccade looks alive; a slow glide looks sleepy. Hence the fast
 // lerp, and hence gaze being excluded from the parameter interpolation.
-static void updateGaze(uint32_t now) {
+static void updateGaze(uint32_t now, float rate) {
   if ((int32_t)(now - s_nextGazeMs) >= 0) {
     s_gazeTargetX = randf(GAZE_RANGE_X);
     s_gazeTargetY = randf(GAZE_RANGE_Y);
@@ -275,27 +295,39 @@ static void updateGaze(uint32_t now) {
                                           (busy ? GAZE_BUSY_MAX_MS
                                                 : GAZE_MAX_MS) + 1);
   }
-  s_cur.pupilX += (s_gazeTargetX - s_cur.pupilX) * GAZE_LERP;
-  s_cur.pupilY += (s_gazeTargetY - s_cur.pupilY) * GAZE_LERP;
+  s_cur.pupilX += (s_gazeTargetX - s_cur.pupilX) * rate;
+  s_cur.pupilY += (s_gazeTargetY - s_cur.pupilY) * rate;
 }
 
 const FaceParams& faceTick(uint32_t nowMs) {
   if (!s_seeded) {
     randomSeed(esp_random());
     s_seeded       = true;
+    s_lastTickMs   = nowMs;
     s_nextBlinkMs  = nowMs + (uint32_t)random(BLINK_MIN_MS, BLINK_MAX_MS + 1);
     s_nextGazeMs   = nowMs;
   }
 
+  // The rates above are per frame at 30 fps, but a full-sprite push plus
+  // the loop period lands nearer 25, and BLE traffic moves it around. So
+  // scale by how long this frame actually took: the settle time stays ~1 s
+  // whatever the panel manages.
+  float dt = (float)(nowMs - s_lastTickMs) / FRAME_REF_MS;
+  s_lastTickMs = nowMs;
+  if (dt < 0.1f) dt = 0.1f;
+  if (dt > 3.0f) dt = 3.0f;   // after a stall, ease in rather than snap
+  float k = LERP_RATE * dt;   if (k > 1.0f) k = 1.0f;
+  float g = GAZE_LERP * dt;   if (g > 1.0f) g = 1.0f;
+
   // Everything except gaze eases toward the target; nothing ever snaps.
-  s_cur.eyeOpen += (s_target.eyeOpen - s_cur.eyeOpen) * LERP_RATE;
-  s_cur.lidTilt += (s_target.lidTilt - s_cur.lidTilt) * LERP_RATE;
-  s_cur.joy     += (s_target.joy     - s_cur.joy)     * LERP_RATE;
-  s_cur.bounce  += (s_target.bounce  - s_cur.bounce)  * LERP_RATE;
-  s_cur.bgHue    = hueApproach(s_cur.bgHue, s_target.bgHue, LERP_RATE);
+  s_cur.eyeOpen += (s_target.eyeOpen - s_cur.eyeOpen) * k;
+  s_cur.lidTilt += (s_target.lidTilt - s_cur.lidTilt) * k;
+  s_cur.joy     += (s_target.joy     - s_cur.joy)     * k;
+  s_cur.bounce  += (s_target.bounce  - s_cur.bounce)  * k;
+  s_cur.bgHue    = hueApproach(s_cur.bgHue, s_target.bgHue, k);
 
   updateBlink(nowMs);
-  updateGaze(nowMs);
+  updateGaze(nowMs, g);
   s_bounceOff = s_cur.bounce *
                 sinf((float)(nowMs % BREATH_MS) * TWO_PI_F / (float)BREATH_MS);
   return s_cur;
