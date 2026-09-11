@@ -614,12 +614,18 @@ void loop() {
     Serial.printf("[ble] %s at t=%lus\n",
                   connectedNow ? "CONNECTED" : "DISCONNECTED", now / 1000);
   }
+  // Cumulative, so the first line printed after the host wakes up reports
+  // everything that happened while serial was dead.
   static unsigned long s_bleLogMs = 0;
+  static unsigned long s_maxGapMs = 0;
+  const unsigned long gap = s_lastHeartbeatMs ? (now - s_lastHeartbeatMs) : 0UL;
+  if (connectedNow && gap > s_maxGapMs) s_maxGapMs = gap;
   if (now - s_bleLogMs >= 5000) {
     s_bleLogMs = now;
-    Serial.printf("[ble] conn=%d hb_age=%lums light=%d heap=%uKB\n",
-                  (int)connectedNow,
-                  s_lastHeartbeatMs ? (now - s_lastHeartbeatMs) : 0UL,
+    Serial.printf("[ble] t=%lus conn=%d hb_age=%lums maxgap=%lums "
+                  "disc=%u adv=%u light=%d heap=%uKB\n",
+                  now / 1000, (int)connectedNow, gap, s_maxGapMs,
+                  (unsigned)bleDisconnects(), (unsigned)bleAdvKicks(),
                   (int)s_backlightOn, (unsigned)(ESP.getFreeHeap() / 1024));
   }
 #endif

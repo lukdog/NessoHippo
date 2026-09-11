@@ -27,6 +27,8 @@ static String             s_rxAssembly;     // accumulates bytes until '\n'
 static String             s_pendingLines;   // complete '\n'-terminated lines
 static portMUX_TYPE       s_rxMux      = portMUX_INITIALIZER_UNLOCKED;
 static unsigned long      s_lastAdvKickMs = 0;
+static uint32_t           s_disconnects   = 0;
+static uint32_t           s_advKicks      = 0;
 
 // How often bleTick() re-asserts advertising while disconnected. Starting
 // advertising that is already running is a no-op, so this only costs a
@@ -39,6 +41,7 @@ class ServerCb : public BLEServerCallbacks {
   }
   void onDisconnect(BLEServer* srv) override {
     s_connected = false;
+    s_disconnects++;
     // Resume advertising so the desktop can auto-reconnect.
     srv->getAdvertising()->start();
   }
@@ -120,6 +123,9 @@ void bleTick() {
 
   const bool reallyConnected = (s_server->getConnectedCount() > 0);
   if (s_connected != reallyConnected) {
+    // Disagreement means the callback never arrived — exactly the case
+    // this watchdog exists for, so it is worth counting separately.
+    if (!reallyConnected) s_disconnects++;
     s_connected = reallyConnected;
   }
   if (reallyConnected) return;
@@ -127,8 +133,12 @@ void bleTick() {
   const unsigned long now = millis();
   if (now - s_lastAdvKickMs < ADV_KICK_MS) return;
   s_lastAdvKickMs = now;
+  s_advKicks++;
   BLEDevice::startAdvertising();
 }
+
+uint32_t bleDisconnects() { return s_disconnects; }
+uint32_t bleAdvKicks()    { return s_advKicks; }
 
 bool blePopLine(String& out) {
   bool got = false;

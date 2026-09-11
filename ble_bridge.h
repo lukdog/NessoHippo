@@ -11,3 +11,9 @@ void bleSendLine(const String& s);
 // there is no real connection, and repairs the connection flag if a
 // disconnect callback was never delivered.
 void bleTick();
+
+// Diagnostics that survive the host sleeping, since serial does not:
+// disconnects seen, and how many times bleTick() had to re-assert
+// advertising. Both count from boot.
+uint32_t bleDisconnects();
+uint32_t bleAdvKicks();
