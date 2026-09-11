@@ -555,7 +555,7 @@ void loop() {
       s_statsOverlay = !s_statsOverlay;
       if (s_statsOverlay) {
         uiRenderStats(snap, s_batPct, s_usbPlugged, persistLevel(snap),
-                      s_maxGapMs);
+                      s_lastHeartbeatMs ? (now - s_lastHeartbeatMs) : 0UL);
         s_statsEnteredMs = now;
       } else {
         uiClear();

@@ -32,6 +32,6 @@ void uiRenderStats(const Snapshot& snap,
                    uint16_t batPct,
                    bool usbPlugged,
                    uint16_t level,
-                   unsigned long maxGapMs);
+                   unsigned long gapMs);
 
 void uiBacklight(bool on);

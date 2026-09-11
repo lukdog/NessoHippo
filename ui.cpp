@@ -19,6 +19,7 @@
 
 #include "ui.h"
 #include "ble_bridge.h"
+#include "mood.h"
 #include <Arduino_Nesso_N1.h>
 
 extern NessoDisplay display;
@@ -343,7 +344,7 @@ void uiRenderStats(const Snapshot& snap,
                    uint16_t batPct,
                    bool usbPlugged,
                    uint16_t level,
-                   unsigned long maxGapMs) {
+                   unsigned long gapMs) {
   // The panel layout is portrait-only. A landscape persona lends it the
   // rotation for as long as it is up; uiClear() on dismissal puts the
   // persona's own rotation back.
@@ -406,20 +407,22 @@ void uiRenderStats(const Snapshot& snap,
   snprintf(buf, sizeof(buf), "%u%%%s", (unsigned)batPct, usbPlugged ? " +" : "");
   row("Bat",   String(buf), COLOR_DIM);
 
-  // BLE link health. Readable on battery, which is the only way to watch
-  // what happens while the desk computer is suspended — on USB the host
-  // cuts power and the counters restart with the device.
-  if (bleForcedDrops() > 0) {
-    snprintf(buf, sizeof(buf), "%u (%u auto)", (unsigned)bleDisconnects(),
-             (unsigned)bleForcedDrops());
+  // Link and mood, the two things that can independently turn the face
+  // blue: no heartbeat looks almost the same as a mood of zero, because
+  // ASLEEP is hue 228 and the sad end of the resting blend is 210.
+  if (bleIsConnected()) {
+    fmtDuration((uint32_t)(gapMs / 1000), buf, sizeof(buf));
+    row("Gap", String(buf), COLOR_DIM);
   } else {
-    snprintf(buf, sizeof(buf), "%u", (unsigned)bleDisconnects());
+    row("Gap", String("no link"), COLOR_ORANGE);
   }
-  row("Disc",  String(buf), COLOR_DIM);
-  snprintf(buf, sizeof(buf), "%u", (unsigned)bleAdvKicks());
-  row("Adv",   String(buf), COLOR_DIM);
-  fmtDuration((uint32_t)(maxGapMs / 1000), buf, sizeof(buf));
-  row("MaxGap", String(buf), COLOR_DIM);
+  snprintf(buf, sizeof(buf), "%d%%", (int)(moodValue(snap) * 100.0f));
+  row("Mood",  String(buf), COLOR_DIM);
+  snprintf(buf, sizeof(buf), "%ld", snap.tokensToday);
+  row("Today", String(buf), COLOR_DIM);
+  snprintf(buf, sizeof(buf), "%u/%u", (unsigned)bleDisconnects(),
+           (unsigned)bleAdvKicks());
+  row("Dis/Adv", String(buf), COLOR_DIM);
 
   // Footer hint.
   display.setTextColor(COLOR_DIM, COLOR_BLACK);
