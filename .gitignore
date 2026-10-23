@@ -1,13 +1,5 @@
-# macOS
-.DS_Store
-
-# Arduino IDE editor metadata
-.vscode/
-sketch.json
+.cache/
 build/
-
-# arduino-cli local build artifacts (only created when --build-path is set in-tree)
-*.elf
-*.bin
 *.hex
-*.map
+*.bin
+.DS_Store
