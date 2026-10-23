@@ -229,6 +229,11 @@ The original brief for the persona is kept in
 it — the drop shadow, the welcome-back timing, a couple of acceptance-test
 details — the commit messages say why.
 
+## License
+
+[MIT](LICENSE). The BLE wire protocol is upstream's; the implementation here is
+its own.
+
 ## Credits
 
 - Upstream design and BLE protocol: [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
